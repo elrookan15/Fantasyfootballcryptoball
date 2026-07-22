@@ -25,18 +25,21 @@ point.
   timers, WebSocket event streaming, contract-enforced positional limits and
   auto-pick. (See historical `DRAFT_ROOM_SPEC` in git history for the vision.)
 
+## Already shipped since the first cut
+
+- **USDC / SPL-token support.** ✅ Leagues can now be denominated in native SOL
+  **or** an SPL token (USDC) via `create_league_spl` / `join_league_spl` /
+  `claim_payout_spl`, using an ATA vault owned by the league PDA. The SOL path is
+  unchanged and both are covered by tests.
+
 ## Natural follow-ups to the escrow program itself
 
 These harden/extend what already exists and are the most logical next commits:
 
-1. **USDC / SPL-token support.** Today the escrow holds native SOL for
-   simplicity. Add an SPL-token vault PDA and swap the system-program transfers
-   for `token::transfer` CPIs so leagues can be denominated in USDC. The account
-   model and access control carry over unchanged.
-2. **On-chain winner verification at resolve.** `resolve_league` currently trusts
+1. **On-chain winner verification at resolve.** `resolve_league` currently trusts
    the admin/oracle to name winners. Pass each winner's `PlayerEntry` PDA as a
    remaining account and assert membership before recording payouts.
-3. **Refund / cancel path.** Let the admin cancel an under-subscribed league and
+2. **Refund / cancel path.** Let the admin cancel an under-subscribed league and
    allow players to reclaim deposits (needed before a lock happens).
 4. **Rent reclamation.** Close the `League` and `PlayerEntry` accounts after all
    payouts are claimed and return the rent to the payer(s).

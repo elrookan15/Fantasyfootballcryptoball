@@ -9,13 +9,13 @@ room) is **not** built here and is tracked in [`NEXT_STEPS.md`](./NEXT_STEPS.md)
 What ships today:
 
 - An **Anchor (Rust)** program, `league-escrow`, that escrows league entry fees
-  and distributes payouts, with PDA-based accounts, access control, and checked
-  arithmetic.
+  and distributes payouts in **either native SOL or an SPL token (USDC)**, with
+  PDA-based accounts, access control, and checked arithmetic.
 - A **TypeScript integration test suite** (Anchor + Mocha) covering the full
-  happy path and several failure cases.
+  happy path and failure cases for both the SOL and USDC paths.
 - A minimal **Next.js** frontend using `@solana/wallet-adapter` and
-  `@coral-xyz/anchor` to connect a wallet, create/join a league, and view escrow
-  status.
+  `@coral-xyz/anchor` to connect a wallet, create a league (SOL or USDC), browse
+  open leagues, join/deposit, and view escrow status.
 - **GitHub Actions CI** that builds the program and runs its tests.
 
 ## Monorepo layout
@@ -37,40 +37,60 @@ What ships today:
 
 ## The escrow program
 
-Program id: `AHw96CksnrkLDHkjQUsRGPbHPpj8Xjyzh7BFrViRt6sc`
+Program id: `YG5dVJydevZcHJQtLNirYUseJtYQQoK83uPMznXVUbW`
+
+> **Program keypair / rotation.** The committed keypair at
+> `target/deploy/league_escrow-keypair.json` is a fresh, random key intended for
+> **devnet/localnet only**. It is fine to commit for reproducible dev + CI, but
+> because it controls program upgrades you should **rotate it before any real /
+> mainnet deployment** (generate a new one with `solana-keygen new`, run
+> `anchor keys sync`, and manage it as a secret).
 
 ### Accounts
 
 - **`League`** — PDA seeded by `["league", admin, league_id]`. Holds config
   (admin, oracle, entry fee, max players), lifecycle `status`
-  (`Open → Locked → Resolved`), the running `total_pot`, and — after resolve —
-  the winner payout table. The PDA account itself custodies the escrowed
-  lamports (pot) on top of its rent-exempt reserve.
+  (`Open → Locked → Resolved`), the running `total_pot`, the currency
+  (`payment_mint`: `None` = SOL, `Some(mint)` = SPL) and vault, and — after
+  resolve — the winner payout table.
 - **`PlayerEntry`** — PDA seeded by `["entry", league, player]`, created when a
   player joins. Because it is `init`-ed, a wallet can only join a league once.
 
 ### Instructions
 
-| Instruction      | Who            | Effect |
-| ---------------- | -------------- | ------ |
-| `create_league`  | anyone (admin) | Initializes a `League` with entry fee, max players, and an oracle authority. |
-| `join_league`    | any player     | Transfers the entry fee into the escrow PDA and registers a `PlayerEntry`. Rejected once locked or full. |
-| `lock_league`    | admin only     | Closes entries (`Open → Locked`). |
-| `resolve_league` | admin or oracle| Records winner(s) and their lamport split (`Locked → Resolved`). Validated: sum ≤ pot, no duplicates, count ≤ players. |
-| `claim_payout`   | winning player | Withdraws the caller's share from escrow exactly once. |
+The program supports **two currencies** chosen at league creation: native SOL
+and any SPL token (e.g. USDC). Fund movement is currency-specific; the lifecycle
+(`lock`/`resolve`) is shared.
 
-Access control uses `has_one`/explicit checks; all balance math uses
-`checked_add`/`checked_sub`; and the escrow keeps its rent-exempt reserve intact
-on withdrawal.
+| Instruction         | Who             | Effect |
+| ------------------- | --------------- | ------ |
+| `create_league`     | anyone (admin)  | Initializes a **SOL** league with entry fee, max players, and an oracle authority. |
+| `create_league_spl` | anyone (admin)  | Same, for an **SPL-token** league; also creates the vault ATA owned by the league PDA. |
+| `join_league`       | any player      | Deposits the SOL entry fee into the league PDA and registers a `PlayerEntry`. |
+| `join_league_spl`   | any player      | Transfers the SPL entry fee from the player's ATA into the vault and registers a `PlayerEntry`. |
+| `lock_league`       | admin only      | Closes entries (`Open → Locked`). Currency-agnostic. |
+| `resolve_league`    | admin or oracle | Records winner(s) and their split (`Locked → Resolved`). Validated: sum ≤ pot, no duplicates, count ≤ players. Currency-agnostic. |
+| `claim_payout`      | winning player  | Withdraws the caller's SOL share from the league PDA exactly once. |
+| `claim_payout_spl`  | winning player  | Transfers the caller's SPL share from the vault (signed by the league PDA) to their ATA, exactly once. |
 
-### Currency choice: SOL vs USDC
+Access control uses `has_one`/explicit checks; the SOL/SPL paths each guard on
+`payment_mint` (a mismatched-currency call fails with `WrongCurrency`); all
+balance math uses `checked_add`/`checked_sub`; the SOL escrow keeps its
+rent-exempt reserve intact on withdrawal.
 
-This MVP escrows **native SOL (lamports)** to keep the program small — no SPL
-token accounts, associated-token-account creation, or token-program CPIs. The
-tradeoff is that leagues are denominated in a volatile asset. Migrating to
-**USDC** later means adding an SPL-token vault PDA and replacing the
-system-program transfers with `token::transfer` CPIs; the account model and
-access control above are unaffected. See `NEXT_STEPS.md`.
+### Currency: SOL vs USDC
+
+- **SOL path** (`create_league` / `join_league` / `claim_payout`) — the simplest
+  option: the `League` PDA custodies lamports directly on top of its rent-exempt
+  reserve, with no token plumbing. Tradeoff: leagues are denominated in a
+  volatile asset.
+- **SPL / USDC path** (`create_league_spl` / `join_league_spl` /
+  `claim_payout_spl`) — funds live in an **associated token account (the vault)**
+  owned by the league PDA; deposits and payouts are `token::transfer` CPIs and
+  use ATAs. Pass the mint (e.g. devnet/mainnet USDC) at creation.
+
+Both paths share the same accounts, lifecycle, and access control, so choosing a
+currency is per-league, not a protocol-wide decision.
 
 ## Prerequisites
 
@@ -88,10 +108,11 @@ anchor build            # compile the SBF program + generate IDL/types
 anchor test             # spins up a local validator, deploys, runs the tests
 ```
 
-`anchor test` should report **10 passing**: the full lifecycle
-(create → join × 2 → lock → resolve → claim) plus failure cases (join after lock,
-non-admin lock/resolve, resolve before lock, payout > pot, double-claim,
-non-winner claim, duplicate join).
+`anchor test` should report **14 passing**: the full SOL lifecycle
+(create → join × 2 → lock → resolve → claim) plus SOL failure cases (join after
+lock, non-admin lock/resolve, resolve before lock, payout > pot, double-claim,
+non-winner claim, duplicate join), **and** the USDC/SPL path (happy path, plus
+non-admin/oracle resolve, double-claim, and a wrong-currency guard).
 
 ## Deploy to devnet
 
@@ -123,9 +144,12 @@ cp target/idl/league_escrow.json app/src/lib/idl/league_escrow.json
 cp target/types/league_escrow.ts app/src/lib/idl/league_escrow.ts
 ```
 
-Then in the browser: connect Phantom → **Create a league** → share your wallet
-address + league id → other wallets **Load league** and **Join / deposit** →
-admin **Lock** and **Resolve** → winners **Claim payout**.
+Then in the browser: connect Phantom → **Create a league** (pick **SOL** or
+**USDC**) → **Browse open leagues** (or open by admin + id) → **Join / deposit**
+→ admin **Lock** and **Resolve** → winners **Claim payout**. The USDC path uses
+the mint from `NEXT_PUBLIC_USDC_MINT` (defaults to Circle's devnet USDC); on
+devnet you can mint test USDC to your wallet via
+[faucet.circle.com](https://faucet.circle.com).
 
 ## License
 
