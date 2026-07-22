@@ -1,12 +1,60 @@
-import express from "express";
+import express, { type Request, type Response, type NextFunction } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+
+// Actions the /api/gemini proxy is allowed to execute. Anything not on this
+// allowlist is rejected before we ever reach out to the GenAI SDK.
+const ALLOWED_ACTIONS = new Set<string>([
+  "searchGroundingFast",
+  "searchGrounding",
+  "searchGroundingPro",
+  "mapsGrounding",
+  "analyzeRoster",
+  "getAssistantGMSuggestion",
+  "generateImagePro",
+  "editImageWithFlash",
+  "generateVeoVideo",
+]);
+
+// Simple in-memory fixed-window rate limiter keyed by client IP. Keeps the
+// public proxy from being used to burn through the Gemini quota. For a
+// multi-instance deployment this should be swapped for a shared store (Redis).
+function createRateLimiter({ windowMs, max }: { windowMs: number; max: number }) {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const entry = hits.get(key);
+
+    if (!entry || now > entry.resetAt) {
+      hits.set(key, { count: 1, resetAt: now + windowMs });
+    } else {
+      entry.count += 1;
+      if (entry.count > max) {
+        const retryAfterSec = Math.ceil((entry.resetAt - now) / 1000);
+        res.setHeader("Retry-After", String(retryAfterSec));
+        return res.status(429).json({ error: "Too many requests. Please slow down." });
+      }
+    }
+
+    // Opportunistically evict expired buckets so the map does not grow forever.
+    if (hits.size > 10_000) {
+      for (const [k, v] of hits) {
+        if (now > v.resetAt) hits.delete(k);
+      }
+    }
+
+    next();
+  };
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  app.set("trust proxy", 1);
   app.use(express.json({ limit: '50mb' }));
 
   // API routes
@@ -14,9 +62,19 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.post("/api/gemini", async (req, res) => {
+  const geminiLimiter = createRateLimiter({ windowMs: 60_000, max: 30 });
+
+  app.post("/api/gemini", geminiLimiter, async (req, res) => {
     try {
-      const { action, payload } = req.body;
+      const { action, payload } = req.body ?? {};
+
+      if (typeof action !== "string" || !ALLOWED_ACTIONS.has(action)) {
+        return res.status(400).json({ error: "Invalid or unsupported action" });
+      }
+      if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+        return res.status(400).json({ error: "Invalid payload" });
+      }
+
       const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
       if (!apiKey) {
         return res.status(500).json({ error: 'Missing Gemini API Key' });
