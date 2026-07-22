@@ -26,7 +26,7 @@ async function startServer() {
 
       if (action === 'searchGroundingFast') {
         const response = await ai.models.generateContent({
-          model: 'gemini-3.1-flash-lite',
+          model: 'gemini-2.5-flash-lite',
           contents: payload.query,
           config: { tools: [{ googleSearch: {} }] },
         });
@@ -38,7 +38,7 @@ async function startServer() {
       
       if (action === 'searchGrounding') {
         const response = await ai.models.generateContent({
-          model: 'gemini-3.5-flash',
+          model: 'gemini-2.5-flash',
           contents: payload.query,
           config: { tools: [{ googleSearch: {} }] },
         });
@@ -50,7 +50,7 @@ async function startServer() {
       
       if (action === 'searchGroundingPro') {
         const response = await ai.models.generateContent({
-          model: 'gemini-3.1-pro-preview',
+          model: 'gemini-2.5-pro',
           contents: payload.query,
           config: { 
             tools: [{ googleSearch: {} }]
@@ -96,7 +96,7 @@ async function startServer() {
           Return JSON format only.
         `;
         const response = await ai.models.generateContent({
-          model: 'gemini-3.1-pro-preview',
+          model: 'gemini-2.5-pro',
           contents: prompt,
           config: {
             tools: [{ googleSearch: {} }],
@@ -142,7 +142,7 @@ async function startServer() {
           Return JSON format only.
         `;
         const response = await ai.models.generateContent({
-          model: 'gemini-3.1-pro-preview',
+          model: 'gemini-2.5-pro',
           contents: prompt,
           config: {
             tools: [{ googleSearch: {} }],
