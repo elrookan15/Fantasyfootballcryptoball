@@ -3,10 +3,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-league_escrow = "AHw96CksnrkLDHkjQUsRGPbHPpj8Xjyzh7BFrViRt6sc"
+league_escrow = "YG5dVJydevZcHJQtLNirYUseJtYQQoK83uPMznXVUbW"
 
 [programs.devnet]
-league_escrow = "AHw96CksnrkLDHkjQUsRGPbHPpj8Xjyzh7BFrViRt6sc"
+league_escrow = "YG5dVJydevZcHJQtLNirYUseJtYQQoK83uPMznXVUbW"
 
 [registry]
 url = "https://api.apr.dev"

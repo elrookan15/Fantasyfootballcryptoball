@@ -6,16 +6,25 @@
 //! authority resolves the league by declaring winner(s) and their payout split;
 //! and winners claim their share directly from the escrow.
 //!
-//! Currency: native SOL (lamports). This deliberately trades off multi-currency
-//! support for simplicity — no SPL token / associated-token-account plumbing or
-//! token-program CPIs. Moving to USDC later means holding an SPL token vault PDA
-//! and swapping the system-program transfers for `token::transfer` CPIs; the
-//! account model and access control below carry over unchanged.
+//! Currency: a league is denominated in EITHER native SOL (lamports) OR an SPL
+//! token (e.g. USDC), chosen at creation. The two paths are separate,
+//! currency-specific instructions that share the same `League`/`PlayerEntry`
+//! accounts and the same lifecycle/access control:
+//!
+//! * SOL path  — `create_league`, `join_league`, `claim_payout`. The `League`
+//!   PDA itself custodies lamports on top of its rent-exempt reserve.
+//! * SPL path  — `create_league_spl`, `join_league_spl`, `claim_payout_spl`.
+//!   Funds live in an associated token account (the "vault") owned by the
+//!   `League` PDA; deposits/payouts are `token::transfer` CPIs and use ATAs.
+//!
+//! `lock_league` and `resolve_league` move no funds and are shared by both.
 
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
+use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer as SplTransfer};
 
-declare_id!("AHw96CksnrkLDHkjQUsRGPbHPpj8Xjyzh7BFrViRt6sc");
+declare_id!("YG5dVJydevZcHJQtLNirYUseJtYQQoK83uPMznXVUbW");
 
 #[program]
 pub mod league_escrow {
@@ -46,6 +55,8 @@ pub mod league_escrow {
         league.player_count = 0;
         league.total_pot = 0;
         league.status = LeagueStatus::Open;
+        league.payment_mint = None;
+        league.vault = Pubkey::default();
         league.winners = Vec::new();
         league.bump = ctx.bumps.league;
 
@@ -55,6 +66,50 @@ pub mod league_escrow {
             oracle: league.oracle,
             entry_fee,
             max_players,
+            payment_mint: None,
+        });
+        Ok(())
+    }
+
+    /// Initialize a league denominated in an SPL token (e.g. USDC).
+    ///
+    /// Identical to [`create_league`] except `entry_fee` is in the token's base
+    /// units and funds are escrowed in a program-owned associated token account
+    /// (the vault) rather than in the league PDA's lamports.
+    pub fn create_league_spl(
+        ctx: Context<CreateLeagueSpl>,
+        league_id: u64,
+        entry_fee: u64,
+        max_players: u16,
+        oracle: Pubkey,
+    ) -> Result<()> {
+        require!(entry_fee > 0, EscrowError::InvalidEntryFee);
+        require!(max_players >= 2, EscrowError::InvalidMaxPlayers);
+
+        let mint_key = ctx.accounts.mint.key();
+        let vault_key = ctx.accounts.vault.key();
+
+        let league = &mut ctx.accounts.league;
+        league.admin = ctx.accounts.admin.key();
+        league.oracle = oracle;
+        league.league_id = league_id;
+        league.entry_fee = entry_fee;
+        league.max_players = max_players;
+        league.player_count = 0;
+        league.total_pot = 0;
+        league.status = LeagueStatus::Open;
+        league.payment_mint = Some(mint_key);
+        league.vault = vault_key;
+        league.winners = Vec::new();
+        league.bump = ctx.bumps.league;
+
+        emit!(LeagueCreated {
+            league: league.key(),
+            admin: league.admin,
+            oracle: league.oracle,
+            entry_fee,
+            max_players,
+            payment_mint: Some(mint_key),
         });
         Ok(())
     }
@@ -64,6 +119,10 @@ pub mod league_escrow {
     /// Uses an `init` per-player [`PlayerEntry`] PDA, so a wallet can only join a
     /// given league once (a second attempt fails at account creation).
     pub fn join_league(ctx: Context<JoinLeague>) -> Result<()> {
+        require!(
+            ctx.accounts.league.payment_mint.is_none(),
+            EscrowError::WrongCurrency
+        );
         require!(
             ctx.accounts.league.status == LeagueStatus::Open,
             EscrowError::LeagueNotOpen
@@ -84,6 +143,62 @@ pub mod league_escrow {
                 system_program::Transfer {
                     from: ctx.accounts.player.to_account_info(),
                     to: ctx.accounts.league.to_account_info(),
+                },
+            ),
+            entry_fee,
+        )?;
+
+        let league = &mut ctx.accounts.league;
+        league.player_count = league
+            .player_count
+            .checked_add(1)
+            .ok_or(EscrowError::MathOverflow)?;
+        league.total_pot = league
+            .total_pot
+            .checked_add(entry_fee)
+            .ok_or(EscrowError::MathOverflow)?;
+
+        let league_key = league.key();
+        let player_count = league.player_count;
+
+        let entry = &mut ctx.accounts.player_entry;
+        entry.league = league_key;
+        entry.player = ctx.accounts.player.key();
+        entry.deposited = entry_fee;
+        entry.bump = ctx.bumps.player_entry;
+
+        emit!(PlayerJoined {
+            league: league_key,
+            player: entry.player,
+            player_count,
+        });
+        Ok(())
+    }
+
+    /// Deposit the SPL-token entry fee and register the signer as a player.
+    ///
+    /// Transfers `entry_fee` base units from the player's ATA into the league
+    /// vault. Like the SOL path, an `init`-ed per-player [`PlayerEntry`] PDA
+    /// prevents joining twice.
+    pub fn join_league_spl(ctx: Context<JoinLeagueSpl>) -> Result<()> {
+        require!(
+            ctx.accounts.league.status == LeagueStatus::Open,
+            EscrowError::LeagueNotOpen
+        );
+        require!(
+            ctx.accounts.league.player_count < ctx.accounts.league.max_players,
+            EscrowError::LeagueFull
+        );
+
+        let entry_fee = ctx.accounts.league.entry_fee;
+
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                SplTransfer {
+                    from: ctx.accounts.player_token_account.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
+                    authority: ctx.accounts.player.to_account_info(),
                 },
             ),
             entry_fee,
@@ -200,6 +315,7 @@ pub mod league_escrow {
         let player_key = ctx.accounts.player.key();
         let league = &mut ctx.accounts.league;
 
+        require!(league.payment_mint.is_none(), EscrowError::WrongCurrency);
         require!(
             league.status == LeagueStatus::Resolved,
             EscrowError::LeagueNotResolved
@@ -245,6 +361,62 @@ pub mod league_escrow {
 
         emit!(PayoutClaimed {
             league: league.key(),
+            player: player_key,
+            amount,
+        });
+        Ok(())
+    }
+
+    /// Withdraw the signer's SPL-token payout from the vault. Each winner can
+    /// claim once. The league PDA signs the transfer out of the vault.
+    pub fn claim_payout_spl(ctx: Context<ClaimPayoutSpl>) -> Result<()> {
+        let player_key = ctx.accounts.player.key();
+
+        let amount: u64;
+        {
+            let league = &mut ctx.accounts.league;
+            require!(
+                league.status == LeagueStatus::Resolved,
+                EscrowError::LeagueNotResolved
+            );
+
+            let idx = league
+                .winners
+                .iter()
+                .position(|s| s.player == player_key)
+                .ok_or(EscrowError::NotAWinner)?;
+            require!(!league.winners[idx].claimed, EscrowError::AlreadyClaimed);
+
+            amount = league.winners[idx].amount;
+            league.winners[idx].claimed = true;
+            league.total_pot = league
+                .total_pot
+                .checked_sub(amount)
+                .ok_or(EscrowError::MathOverflow)?;
+        }
+
+        // Sign the vault -> winner transfer with the league PDA seeds.
+        let admin = ctx.accounts.league.admin;
+        let league_id = ctx.accounts.league.league_id.to_le_bytes();
+        let bump = ctx.accounts.league.bump;
+        let signer_seeds: &[&[&[u8]]] =
+            &[&[b"league", admin.as_ref(), &league_id, &[bump]]];
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                SplTransfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.player_token_account.to_account_info(),
+                    authority: ctx.accounts.league.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            amount,
+        )?;
+
+        emit!(PayoutClaimed {
+            league: ctx.accounts.league.key(),
             player: player_key,
             amount,
         });
@@ -324,6 +496,101 @@ pub struct ClaimPayout<'info> {
     pub player: Signer<'info>,
 }
 
+#[derive(Accounts)]
+#[instruction(league_id: u64, entry_fee: u64, max_players: u16)]
+pub struct CreateLeagueSpl<'info> {
+    #[account(
+        init,
+        payer = admin,
+        space = League::space(max_players),
+        seeds = [b"league", admin.key().as_ref(), &league_id.to_le_bytes()],
+        bump
+    )]
+    pub league: Account<'info, League>,
+    pub mint: Account<'info, Mint>,
+    /// Program-owned escrow vault (ATA of the league PDA) that holds the pot.
+    #[account(
+        init,
+        payer = admin,
+        associated_token::mint = mint,
+        associated_token::authority = league,
+    )]
+    pub vault: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct JoinLeagueSpl<'info> {
+    #[account(
+        mut,
+        constraint = league.payment_mint == Some(mint.key()) @ EscrowError::WrongCurrency,
+        seeds = [b"league", league.admin.as_ref(), &league.league_id.to_le_bytes()],
+        bump = league.bump
+    )]
+    pub league: Account<'info, League>,
+    #[account(
+        init,
+        payer = player,
+        space = 8 + PlayerEntry::LEN,
+        seeds = [b"entry", league.key().as_ref(), player.key().as_ref()],
+        bump
+    )]
+    pub player_entry: Account<'info, PlayerEntry>,
+    #[account(mut)]
+    pub player: Signer<'info>,
+    pub mint: Account<'info, Mint>,
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = league,
+    )]
+    pub vault: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = player,
+    )]
+    pub player_token_account: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ClaimPayoutSpl<'info> {
+    #[account(
+        mut,
+        constraint = league.payment_mint == Some(mint.key()) @ EscrowError::WrongCurrency,
+        seeds = [b"league", league.admin.as_ref(), &league.league_id.to_le_bytes()],
+        bump = league.bump
+    )]
+    pub league: Account<'info, League>,
+    #[account(mut)]
+    pub player: Signer<'info>,
+    pub mint: Account<'info, Mint>,
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = league,
+    )]
+    pub vault: Account<'info, TokenAccount>,
+    /// Winner's ATA, created on demand if they don't have one yet.
+    #[account(
+        init_if_needed,
+        payer = player,
+        associated_token::mint = mint,
+        associated_token::authority = player,
+    )]
+    pub player_token_account: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
 #[account]
 pub struct League {
     /// League creator; can lock and resolve.
@@ -340,8 +607,12 @@ pub struct League {
     pub player_count: u16,
     /// Lifecycle status.
     pub status: LeagueStatus,
-    /// Total lamports collected from entry fees (excludes rent reserve).
+    /// Total entry fees collected (lamports for SOL, base units for SPL).
     pub total_pot: u64,
+    /// `None` for a native-SOL league; `Some(mint)` for an SPL-token league.
+    pub payment_mint: Option<Pubkey>,
+    /// Escrow vault (ATA of this PDA) for SPL leagues; default pubkey for SOL.
+    pub vault: Pubkey,
     /// Winner payout table, populated on resolve.
     pub winners: Vec<WinnerShare>,
     /// PDA bump.
@@ -350,7 +621,9 @@ pub struct League {
 
 impl League {
     /// Fixed field bytes (excludes the 8-byte discriminator and the winners vec).
-    pub const BASE_LEN: usize = 32 + 32 + 8 + 8 + 2 + 2 + 1 + 8 + 1;
+    /// admin + oracle + league_id + entry_fee + max_players + player_count
+    /// + status + total_pot + payment_mint(Option<Pubkey>) + vault + bump.
+    pub const BASE_LEN: usize = 32 + 32 + 8 + 8 + 2 + 2 + 1 + 8 + (1 + 32) + 32 + 1;
 
     /// Account size, sized to hold up to `max_players` winner shares.
     pub fn space(max_players: u16) -> usize {
@@ -395,6 +668,7 @@ pub struct LeagueCreated {
     pub oracle: Pubkey,
     pub entry_fee: u64,
     pub max_players: u16,
+    pub payment_mint: Option<Pubkey>,
 }
 
 #[event]
@@ -461,4 +735,6 @@ pub enum EscrowError {
     InsufficientEscrow,
     #[msg("Checked arithmetic overflow/underflow")]
     MathOverflow,
+    #[msg("Instruction currency does not match the league's currency")]
+    WrongCurrency,
 }
