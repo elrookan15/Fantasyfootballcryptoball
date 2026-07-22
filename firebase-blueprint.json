@@ -1,0 +1,37 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user profile in the fantasy sports platform",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "name", "createdAt", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "A chat message to/from Gemini",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "model", "system"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["text", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles"
+    },
+    "users/{userId}/chats/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Stores conversation history with Gemini"
+    }
+  }
+}

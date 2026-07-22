@@ -1,0 +1,109 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoundBlock | NEURAL COMMAND</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Outfit:wght@300;400;800&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        --neon-pink: #ff00ff;
+        --neon-blue: #00f2ff;
+        --neon-green: #39ff14;
+        --neon-orange: #ff9d00;
+        --hud-blue: rgba(0, 242, 255, 0.15);
+      }
+      body {
+        font-family: 'JetBrains Mono', monospace;
+        background-color: #010409;
+        color: #e6edf3;
+        overflow: hidden;
+        height: 100vh;
+      }
+      .hud-font { font-family: 'JetBrains Mono', monospace; }
+      .brand-font { font-family: 'Outfit', sans-serif; }
+      
+      .hud-bg {
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        background: 
+          radial-gradient(circle at 50% 50%, rgba(0, 10, 30, 1) 0%, rgba(1, 4, 9, 1) 100%),
+          linear-gradient(rgba(0, 242, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(0, 242, 255, 0.03) 1px, transparent 1px);
+        background-size: 100% 100%, 30px 30px, 30px 30px;
+      }
+
+      .scanner {
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 2px;
+        background: linear-gradient(90deg, transparent, var(--neon-blue), transparent);
+        opacity: 0.15;
+        animation: scan 8s linear infinite;
+        pointer-events: none;
+      }
+
+      @keyframes scan {
+        0% { top: -5%; }
+        100% { top: 105%; }
+      }
+
+      @keyframes ticker {
+        0% { transform: translate3d(0, 0, 0); }
+        100% { transform: translate3d(-33.33%, 0, 0); }
+      }
+
+      @keyframes toast-slide-in {
+        0% { transform: translateX(100%); opacity: 0; }
+        100% { transform: translateX(0); opacity: 1; }
+      }
+
+      .hologram-panel {
+        background: rgba(13, 17, 23, 0.7);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(0, 242, 255, 0.2);
+        position: relative;
+        clip-path: polygon(0 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%);
+      }
+
+      .hologram-panel::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; width: 4px; height: 20px;
+        background: var(--neon-blue);
+      }
+
+      @keyframes rotate {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+
+      .corner-tl { position: absolute; top: 10px; left: 10px; width: 20px; height: 20px; border-top: 2px solid var(--neon-blue); border-left: 2px solid var(--neon-blue); }
+      .corner-tr { position: absolute; top: 10px; right: 10px; width: 20px; height: 20px; border-top: 2px solid var(--neon-blue); border-right: 2px solid var(--neon-blue); }
+
+      ::-webkit-scrollbar { width: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: rgba(0, 242, 255, 0.2); border-radius: 10px; }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "recharts": "https://esm.sh/recharts@^3.7.0",
+        "react/": "https://esm.sh/react@^19.2.4/",
+        "react": "https://esm.sh/react@^19.2.4",
+        "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+        "@google/genai": "https://esm.sh/@google/genai@^1.39.0"
+      }
+    }
+    </script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div class="hud-bg"></div>
+    <div class="scanner"></div>
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
