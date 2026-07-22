@@ -83,7 +83,8 @@ label.grow {
   flex: 3;
 }
 
-input {
+input,
+select {
   background: #0d1420;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -92,8 +93,32 @@ input {
   font-size: 14px;
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: none;
+  border-color: var(--accent);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.card-head h2 {
+  margin: 0;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  font-weight: 500;
+}
+
+button.ghost:hover:not(:disabled) {
   border-color: var(--accent);
 }
 

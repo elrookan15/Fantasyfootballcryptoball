@@ -7,38 +7,71 @@ import {
   useWallet,
 } from "@solana/wallet-adapter-react";
 import { BN } from "@coral-xyz/anchor";
-import { LAMPORTS_PER_SOL, PublicKey, SystemProgram } from "@solana/web3.js";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   entryPda,
   getProgram,
   getReadonlyProgram,
   leaguePda,
+  playerAta,
   statusLabel,
+  vaultAta,
 } from "../lib/program";
-import { NETWORK_LABEL } from "../lib/constants";
+import {
+  NETWORK_LABEL,
+  SOL_DECIMALS,
+  USDC_DECIMALS,
+  USDC_MINT,
+} from "../lib/constants";
 
 const WalletMultiButton = dynamic(
   () =>
-    import("@solana/wallet-adapter-react-ui").then(
-      (m) => m.WalletMultiButton
-    ),
+    import("@solana/wallet-adapter-react-ui").then((m) => m.WalletMultiButton),
   { ssr: false }
 );
 
+type Currency = "SOL" | "USDC" | "SPL";
 type LeagueRef = { admin: string; leagueId: string };
 
 type LeagueView = {
   address: string;
   admin: string;
   oracle: string;
-  entryFeeSol: number;
+  currency: Currency;
+  decimals: number;
+  paymentMint: string | null;
+  vault: string | null;
+  entryFee: number;
   maxPlayers: number;
   playerCount: number;
-  potSol: number;
-  escrowBalanceSol: number;
+  pot: number;
+  escrowBalance: number;
   status: string;
-  winners: { player: string; amountSol: number; claimed: boolean }[];
+  winners: { player: string; amount: number; claimed: boolean }[];
 };
+
+type LeagueSummary = {
+  admin: string;
+  leagueId: string;
+  currency: Currency;
+  entryFee: number;
+  playerCount: number;
+  maxPlayers: number;
+};
+
+function currencyOf(paymentMint: PublicKey | null): Currency {
+  if (!paymentMint) return "SOL";
+  if (paymentMint.equals(USDC_MINT)) return "USDC";
+  return "SPL";
+}
+
+function toBaseUnits(value: string, decimals: number): BN {
+  const f = parseFloat(value);
+  if (!isFinite(f) || f <= 0) throw new Error("Enter a positive amount");
+  return new BN(Math.round(f * 10 ** decimals));
+}
 
 export default function Home() {
   const { connection } = useConnection();
@@ -49,13 +82,15 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
 
   // Create-league form.
+  const [currency, setCurrency] = useState<"SOL" | "USDC">("SOL");
   const [entryFee, setEntryFee] = useState("0.1");
   const [maxPlayers, setMaxPlayers] = useState("4");
-  const [leagueId, setLeagueId] = useState(
-    () => String(Math.floor(Math.random() * 1_000_000))
+  const [leagueId, setLeagueId] = useState(() =>
+    String(Math.floor(Math.random() * 1_000_000))
   );
 
-  // Selected/looked-up league.
+  // Browse + lookup.
+  const [openLeagues, setOpenLeagues] = useState<LeagueSummary[]>([]);
   const [ref, setRef] = useState<LeagueRef | null>(null);
   const [lookupAdmin, setLookupAdmin] = useState("");
   const [lookupId, setLookupId] = useState("");
@@ -73,20 +108,36 @@ export default function Home() {
         const program = getReadonlyProgram(connection);
         const pda = leaguePda(new PublicKey(r.admin), new BN(r.leagueId));
         const acc = await program.account.league.fetch(pda);
-        const balance = await connection.getBalance(pda);
+        const paymentMint = acc.paymentMint as PublicKey | null;
+        const cur = currencyOf(paymentMint);
+
+        let decimals = SOL_DECIMALS;
+        let escrowBalance = 0;
+        if (!paymentMint) {
+          escrowBalance = (await connection.getBalance(pda)) / 10 ** decimals;
+        } else {
+          const bal = await connection.getTokenAccountBalance(acc.vault);
+          decimals = bal.value.decimals;
+          escrowBalance = bal.value.uiAmount ?? 0;
+        }
+
         setLeague({
           address: pda.toBase58(),
           admin: acc.admin.toBase58(),
           oracle: acc.oracle.toBase58(),
-          entryFeeSol: acc.entryFee.toNumber() / LAMPORTS_PER_SOL,
+          currency: cur,
+          decimals,
+          paymentMint: paymentMint ? paymentMint.toBase58() : null,
+          vault: paymentMint ? acc.vault.toBase58() : null,
+          entryFee: acc.entryFee.toNumber() / 10 ** decimals,
           maxPlayers: acc.maxPlayers,
           playerCount: acc.playerCount,
-          potSol: acc.totalPot.toNumber() / LAMPORTS_PER_SOL,
-          escrowBalanceSol: balance / LAMPORTS_PER_SOL,
+          pot: acc.totalPot.toNumber() / 10 ** decimals,
+          escrowBalance,
           status: statusLabel(acc.status as Record<string, unknown>),
           winners: acc.winners.map((w) => ({
             player: w.player.toBase58(),
-            amountSol: w.amount.toNumber() / LAMPORTS_PER_SOL,
+            amount: w.amount.toNumber() / 10 ** decimals,
             claimed: w.claimed,
           })),
         });
@@ -98,12 +149,41 @@ export default function Home() {
     [connection, notify]
   );
 
+  const loadOpenLeagues = useCallback(async () => {
+    try {
+      const program = getReadonlyProgram(connection);
+      const all = await program.account.league.all();
+      const open = all
+        .filter((l) => "open" in (l.account.status as Record<string, unknown>))
+        .map((l) => {
+          const pm = l.account.paymentMint as PublicKey | null;
+          const cur = currencyOf(pm);
+          const dec = cur === "SOL" ? SOL_DECIMALS : USDC_DECIMALS;
+          return {
+            admin: l.account.admin.toBase58(),
+            leagueId: l.account.leagueId.toString(),
+            currency: cur,
+            entryFee: l.account.entryFee.toNumber() / 10 ** dec,
+            playerCount: l.account.playerCount,
+            maxPlayers: l.account.maxPlayers,
+          } as LeagueSummary;
+        });
+      setOpenLeagues(open);
+      notify(`Found ${open.length} open league(s).`);
+    } catch (e) {
+      notify(`Could not list leagues: ${(e as Error).message}`);
+    }
+  }, [connection, notify]);
+
   useEffect(() => {
     if (ref) void refresh(ref);
-    // Poll for on-chain updates so escrow balance/status stay fresh.
     const id = ref ? setInterval(() => void refresh(ref), 8000) : undefined;
     return () => id && clearInterval(id);
   }, [ref, refresh]);
+
+  useEffect(() => {
+    void loadOpenLeagues();
+  }, [loadOpenLeagues]);
 
   const run = useCallback(
     async (label: string, fn: () => Promise<string>) => {
@@ -114,13 +194,14 @@ export default function Home() {
         const sig = await fn();
         notify(`${label} ✓  (tx ${sig.slice(0, 8)}…)`);
         if (ref) await refresh(ref);
+        await loadOpenLeagues();
       } catch (e) {
         notify(`${label} failed: ${(e as Error).message}`);
       } finally {
         setBusy(false);
       }
     },
-    [wallet, ref, refresh, notify]
+    [wallet, ref, refresh, loadOpenLeagues, notify]
   );
 
   const onCreate = () =>
@@ -128,41 +209,87 @@ export default function Home() {
       const program = getProgram(connection, wallet!);
       const id = new BN(leagueId);
       const pda = leaguePda(wallet!.publicKey, id);
-      const sig = await program.methods
-        .createLeague(
-          id,
-          new BN(Math.round(parseFloat(entryFee) * LAMPORTS_PER_SOL)),
-          parseInt(maxPlayers, 10),
-          wallet!.publicKey // admin doubles as oracle by default
-        )
-        .accountsPartial({
-          league: pda,
-          admin: wallet!.publicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
+      const players = parseInt(maxPlayers, 10);
       const newRef = { admin: wallet!.publicKey.toBase58(), leagueId };
+
+      let sig: string;
+      if (currency === "SOL") {
+        sig = await program.methods
+          .createLeague(
+            id,
+            toBaseUnits(entryFee, SOL_DECIMALS),
+            players,
+            wallet!.publicKey
+          )
+          .accountsPartial({
+            league: pda,
+            admin: wallet!.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      } else {
+        sig = await program.methods
+          .createLeagueSpl(
+            id,
+            toBaseUnits(entryFee, USDC_DECIMALS),
+            players,
+            wallet!.publicKey
+          )
+          .accountsPartial({
+            league: pda,
+            mint: USDC_MINT,
+            vault: vaultAta(pda, USDC_MINT),
+            admin: wallet!.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      }
       setRef(newRef);
       setLookupAdmin(newRef.admin);
       setLookupId(leagueId);
       return sig;
     });
 
+  const selectLeague = (admin: string, leagueId: string) => {
+    setLookupAdmin(admin);
+    setLookupId(leagueId);
+    setRef({ admin, leagueId });
+  };
+
   const onLookup = () => {
     if (!lookupAdmin || !lookupId) return notify("Enter admin + league id.");
-    setRef({ admin: lookupAdmin.trim(), leagueId: lookupId.trim() });
+    selectLeague(lookupAdmin.trim(), lookupId.trim());
   };
 
   const onJoin = () =>
     run("Join league", async () => {
       const program = getProgram(connection, wallet!);
       const pda = new PublicKey(league!.address);
+      if (league!.paymentMint === null) {
+        return program.methods
+          .joinLeague()
+          .accountsPartial({
+            league: pda,
+            playerEntry: entryPda(pda, wallet!.publicKey),
+            player: wallet!.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      }
+      const mint = new PublicKey(league!.paymentMint);
       return program.methods
-        .joinLeague()
+        .joinLeagueSpl()
         .accountsPartial({
           league: pda,
           playerEntry: entryPda(pda, wallet!.publicKey),
           player: wallet!.publicKey,
+          mint,
+          vault: new PublicKey(league!.vault!),
+          playerTokenAccount: playerAta(mint, wallet!.publicKey),
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
         .rpc();
@@ -184,9 +311,7 @@ export default function Home() {
     run("Resolve league", async () => {
       const program = getProgram(connection, wallet!);
       const winner = new PublicKey(winnerAddr.trim());
-      const amount = new BN(
-        Math.round(parseFloat(winnerAmt) * LAMPORTS_PER_SOL)
-      );
+      const amount = toBaseUnits(winnerAmt, league!.decimals);
       return program.methods
         .resolveLeague([winner], [amount])
         .accountsPartial({
@@ -199,18 +324,31 @@ export default function Home() {
   const onClaim = () =>
     run("Claim payout", async () => {
       const program = getProgram(connection, wallet!);
+      const pda = new PublicKey(league!.address);
+      if (league!.paymentMint === null) {
+        return program.methods
+          .claimPayout()
+          .accountsPartial({ league: pda, player: wallet!.publicKey })
+          .rpc();
+      }
+      const mint = new PublicKey(league!.paymentMint);
       return program.methods
-        .claimPayout()
+        .claimPayoutSpl()
         .accountsPartial({
-          league: new PublicKey(league!.address),
+          league: pda,
           player: wallet!.publicKey,
+          mint,
+          vault: new PublicKey(league!.vault!),
+          playerTokenAccount: playerAta(mint, wallet!.publicKey),
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
         })
         .rpc();
     });
 
   const isAdmin = useMemo(
-    () =>
-      !!publicKey && !!league && league.admin === publicKey.toBase58(),
+    () => !!publicKey && !!league && league.admin === publicKey.toBase58(),
     [publicKey, league]
   );
   const isAuthority = useMemo(
@@ -244,7 +382,19 @@ export default function Home() {
           <h2>1 · Create a league</h2>
           <div className="row">
             <label>
-              Entry fee (SOL)
+              Currency
+              <select
+                value={currency}
+                onChange={(e) =>
+                  setCurrency(e.target.value as "SOL" | "USDC")
+                }
+              >
+                <option value="SOL">SOL (native)</option>
+                <option value="USDC">USDC (SPL)</option>
+              </select>
+            </label>
+            <label>
+              Entry fee ({currency})
               <input
                 value={entryFee}
                 onChange={(e) => setEntryFee(e.target.value)}
@@ -266,15 +416,62 @@ export default function Home() {
             </label>
           </div>
           <button disabled={!wallet || busy} onClick={onCreate}>
-            Create league
+            Create {currency} league
           </button>
         </section>
 
         <section className="card">
-          <h2>2 · Open an existing league</h2>
-          <div className="row">
+          <div className="card-head">
+            <h2>2 · Browse open leagues</h2>
+            <button className="ghost" disabled={busy} onClick={loadOpenLeagues}>
+              Refresh
+            </button>
+          </div>
+          {openLeagues.length === 0 ? (
+            <p className="hint">No open leagues found yet.</p>
+          ) : (
+            <table className="winners">
+              <thead>
+                <tr>
+                  <th>Admin</th>
+                  <th>Id</th>
+                  <th>Currency</th>
+                  <th>Entry</th>
+                  <th>Players</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {openLeagues.map((l) => (
+                  <tr key={`${l.admin}-${l.leagueId}`}>
+                    <td className="mono">
+                      {l.admin.slice(0, 4)}…{l.admin.slice(-4)}
+                    </td>
+                    <td>{l.leagueId}</td>
+                    <td>{l.currency}</td>
+                    <td>
+                      {l.entryFee} {l.currency}
+                    </td>
+                    <td>
+                      {l.playerCount}/{l.maxPlayers}
+                    </td>
+                    <td>
+                      <button
+                        className="ghost"
+                        disabled={busy}
+                        onClick={() => selectLeague(l.admin, l.leagueId)}
+                      >
+                        Open
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="row" style={{ marginTop: 14 }}>
             <label className="grow">
-              Admin pubkey
+              …or open by admin pubkey
               <input
                 value={lookupAdmin}
                 onChange={(e) => setLookupAdmin(e.target.value)}
@@ -307,12 +504,20 @@ export default function Home() {
                 </dd>
               </div>
               <div>
-                <dt>Escrow balance</dt>
-                <dd>{league.escrowBalanceSol.toFixed(4)} SOL</dd>
+                <dt>Currency</dt>
+                <dd>{league.currency}</dd>
               </div>
               <div>
-                <dt>Pot (fees)</dt>
-                <dd>{league.potSol.toFixed(4)} SOL</dd>
+                <dt>Escrow balance</dt>
+                <dd>
+                  {league.escrowBalance.toFixed(4)} {league.currency}
+                </dd>
+              </div>
+              <div>
+                <dt>Pot</dt>
+                <dd>
+                  {league.pot.toFixed(4)} {league.currency}
+                </dd>
               </div>
               <div>
                 <dt>Players</dt>
@@ -322,10 +527,15 @@ export default function Home() {
               </div>
               <div>
                 <dt>Entry fee</dt>
-                <dd>{league.entryFeeSol} SOL</dd>
+                <dd>
+                  {league.entryFee} {league.currency}
+                </dd>
               </div>
             </dl>
             <p className="mono">PDA: {league.address}</p>
+            {league.paymentMint && (
+              <p className="mono">Mint: {league.paymentMint}</p>
+            )}
 
             {league.winners.length > 0 && (
               <table className="winners">
@@ -342,7 +552,9 @@ export default function Home() {
                       <td className="mono">
                         {w.player.slice(0, 4)}…{w.player.slice(-4)}
                       </td>
-                      <td>{w.amountSol.toFixed(4)} SOL</td>
+                      <td>
+                        {w.amount.toFixed(4)} {league.currency}
+                      </td>
                       <td>{w.claimed ? "yes" : "no"}</td>
                     </tr>
                   ))}
@@ -355,7 +567,7 @@ export default function Home() {
                 disabled={!wallet || busy || league.status !== "open"}
                 onClick={onJoin}
               >
-                Join / deposit {league.entryFeeSol} SOL
+                Join / deposit {league.entryFee} {league.currency}
               </button>
               <button
                 disabled={!wallet || busy || league.status !== "resolved"}
@@ -386,11 +598,11 @@ export default function Home() {
                     />
                   </label>
                   <label>
-                    Payout (SOL)
+                    Payout ({league.currency})
                     <input
                       value={winnerAmt}
                       onChange={(e) => setWinnerAmt(e.target.value)}
-                      placeholder={String(league.potSol)}
+                      placeholder={String(league.pot)}
                     />
                   </label>
                 </div>
