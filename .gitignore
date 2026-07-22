@@ -1,24 +1,43 @@
-# Logs
-logs
-*.log
+# --- Rust / Anchor build output ---
+/target/*
+!/target/deploy
+/target/deploy/*
+# Keep ONLY the program keypair committed so the on-chain program id stays
+# stable across machines and CI. NOTE: this key controls program upgrades —
+# for a real mainnet deployment, rotate it and manage it as a secret.
+!/target/deploy/league_escrow-keypair.json
+.anchor/
+test-ledger/
+**/*.rs.bk
+
+# --- Node ---
+node_modules/
+.pnp
+.pnp.js
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# --- Next.js frontend ---
+app/.next/
+app/out/
+app/build/
+app/next-env.d.ts
 
-# Editor directories and files
+# --- Env / secrets ---
+.env
+.env*.local
+*.pem
+wallet.json
+!.env.example
+
+# --- Editor / OS ---
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+*.swp
+
+# TS build info
+*.tsbuildinfo
