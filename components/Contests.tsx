@@ -1098,7 +1098,7 @@ const DraftRoom: React.FC<{ setActiveTab: (t: string) => void }> = ({ setActiveT
                  {isFetchingIntel ? (
                    <span className="animate-pulse flex items-center gap-2"><div className="w-2 h-2 bg-cyan-500 rounded-full animate-ping"></div> Syncing search data...</span>
                  ) : (
-                   <div dangerouslySetInnerHTML={{ __html: playerIntel.intel.replace(/\n/g, '<br/>') }} />
+                   <div className="whitespace-pre-wrap">{playerIntel.intel}</div>
                  )}
               </div>
            </div>
