@@ -310,14 +310,22 @@ export default function Home() {
   const onResolve = () =>
     run("Resolve league", async () => {
       const program = getProgram(connection, wallet!);
+      const leaguePubkey = new PublicKey(league!.address);
       const winner = new PublicKey(winnerAddr.trim());
       const amount = toBaseUnits(winnerAmt, league!.decimals);
       return program.methods
         .resolveLeague([winner], [amount])
         .accountsPartial({
-          league: new PublicKey(league!.address),
+          league: leaguePubkey,
           authority: wallet!.publicKey,
         })
+        .remainingAccounts([
+          {
+            pubkey: entryPda(leaguePubkey, winner),
+            isWritable: false,
+            isSigner: false,
+          },
+        ])
         .rpc();
     });
 

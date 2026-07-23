@@ -259,14 +259,15 @@ pub mod league_escrow {
         amounts: Vec<u64>,
     ) -> Result<()> {
         let authority = ctx.accounts.authority.key();
-        let league = &mut ctx.accounts.league;
+        let league_key = ctx.accounts.league.key();
 
         require!(
-            authority == league.admin || authority == league.oracle,
+            authority == ctx.accounts.league.admin
+                || authority == ctx.accounts.league.oracle,
             EscrowError::Unauthorized
         );
         require!(
-            league.status == LeagueStatus::Locked,
+            ctx.accounts.league.status == LeagueStatus::Locked,
             EscrowError::LeagueNotLocked
         );
         require!(!winners.is_empty(), EscrowError::NoWinners);
@@ -275,16 +276,26 @@ pub mod league_escrow {
             EscrowError::WinnerAmountMismatch
         );
         require!(
-            winners.len() as u16 <= league.player_count,
+            winners.len() as u16 <= ctx.accounts.league.player_count,
             EscrowError::TooManyWinners
+        );
+        // One PlayerEntry PDA must be supplied per winner, in the same order.
+        require!(
+            ctx.remaining_accounts.len() == winners.len(),
+            EscrowError::WinnerEntryMismatch
         );
 
         let mut total: u64 = 0;
         for amount in amounts.iter() {
             total = total.checked_add(*amount).ok_or(EscrowError::MathOverflow)?;
         }
-        require!(total <= league.total_pot, EscrowError::PayoutExceedsPot);
+        // Require exact full-pot allocation to prevent funds from becoming stuck.
+        require!(
+            total == ctx.accounts.league.total_pot,
+            EscrowError::PayoutMustEqualPot
+        );
 
+        // Validate all winner entries before mutating league state.
         let mut shares: Vec<WinnerShare> = Vec::with_capacity(winners.len());
         for (i, winner) in winners.iter().enumerate() {
             require!(amounts[i] > 0, EscrowError::InvalidPayout);
@@ -292,6 +303,43 @@ pub mod league_escrow {
                 !shares.iter().any(|s| s.player == *winner),
                 EscrowError::DuplicateWinner
             );
+
+            // Derive the expected PlayerEntry PDA and verify the supplied account.
+            let expected_entry = Pubkey::find_program_address(
+                &[b"entry", league_key.as_ref(), winner.as_ref()],
+                &crate::ID,
+            )
+            .0;
+            let entry_info = &ctx.remaining_accounts[i];
+            require_keys_eq!(
+                *entry_info.key,
+                expected_entry,
+                EscrowError::WinnerEntryMismatch
+            );
+
+            // Verify the account is owned by this program, then manually
+            // deserialize it — avoids `Account::try_from` lifetime constraints
+            // that conflict with the `#[program]` macro's dispatching.
+            if entry_info.owner != &crate::ID {
+                return err!(EscrowError::WinnerNotParticipant);
+            }
+            let data = entry_info
+                .try_borrow_data()
+                .map_err(|_| error!(EscrowError::WinnerNotParticipant))?;
+            // Skip the 8-byte Anchor discriminator.
+            let entry = PlayerEntry::try_deserialize(&mut &data[8..])
+                .map_err(|_| error!(EscrowError::WinnerNotParticipant))?;
+            require_keys_eq!(
+                entry.league,
+                league_key,
+                EscrowError::WinnerNotParticipant
+            );
+            require_keys_eq!(
+                entry.player,
+                *winner,
+                EscrowError::WinnerNotParticipant
+            );
+
             shares.push(WinnerShare {
                 player: *winner,
                 amount: amounts[i],
@@ -299,11 +347,12 @@ pub mod league_escrow {
             });
         }
 
+        let league = &mut ctx.accounts.league;
         league.winners = shares;
         league.status = LeagueStatus::Resolved;
 
         emit!(LeagueResolved {
-            league: league.key(),
+            league: league_key,
             total_payout: total,
             winner_count: winners.len() as u16,
         });
@@ -329,6 +378,12 @@ pub mod league_escrow {
         require!(!league.winners[idx].claimed, EscrowError::AlreadyClaimed);
 
         let amount = league.winners[idx].amount;
+
+        // Check the tracked pot is sufficient before mutating state.
+        require!(
+            league.total_pot >= amount,
+            EscrowError::InsufficientEscrow
+        );
 
         // The league PDA is program-owned, so lamports must be moved by direct
         // balance manipulation (a system-program transfer only works when the
@@ -388,6 +443,11 @@ pub mod league_escrow {
             require!(!league.winners[idx].claimed, EscrowError::AlreadyClaimed);
 
             amount = league.winners[idx].amount;
+            // Verify vault holds enough tokens before mutating claimed state.
+            require!(
+                ctx.accounts.vault.amount >= amount,
+                EscrowError::InsufficientEscrow
+            );
             league.winners[idx].claimed = true;
             league.total_pot = league
                 .total_pot
@@ -727,6 +787,12 @@ pub enum EscrowError {
     DuplicateWinner,
     #[msg("Total payout exceeds the collected pot")]
     PayoutExceedsPot,
+    #[msg("Total payout must equal the full collected pot")]
+    PayoutMustEqualPot,
+    #[msg("Winner entry accounts do not match the winner list")]
+    WinnerEntryMismatch,
+    #[msg("Winner is not a participant in this league")]
+    WinnerNotParticipant,
     #[msg("Caller is not a winner of this league")]
     NotAWinner,
     #[msg("Payout already claimed")]

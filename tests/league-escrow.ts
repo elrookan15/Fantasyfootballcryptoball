@@ -42,6 +42,18 @@ describe("league-escrow", () => {
     )[0];
   }
 
+  /** Build the remainingAccounts array for resolveLeague, one entry per winner. */
+  function winnerEntries(
+    league: PublicKey,
+    winners: PublicKey[]
+  ): { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] {
+    return winners.map((w) => ({
+      pubkey: entryPda(league, w),
+      isWritable: false,
+      isSigner: false,
+    }));
+  }
+
   async function airdrop(pubkey: PublicKey, sol: number) {
     const sig = await connection.requestAirdrop(pubkey, sol * LAMPORTS_PER_SOL);
     const bh = await connection.getLatestBlockhash();
@@ -137,16 +149,15 @@ describe("league-escrow", () => {
     state = await program.account.league.fetch(league);
     assert.deepStrictEqual(state.status, { locked: {} });
 
-    // Resolve with a 60/40 split of the full pot.
+    // Resolve with a 60/40 split of the full pot (must equal total_pot exactly).
     const pot = ENTRY_FEE.muln(2);
     const winner1 = pot.muln(60).divn(100);
     const winner2 = pot.sub(winner1);
+    const winners = [p1.publicKey, p2.publicKey];
     await program.methods
-      .resolveLeague(
-        [p1.publicKey, p2.publicKey],
-        [winner1, winner2]
-      )
+      .resolveLeague(winners, [winner1, winner2])
       .accountsPartial({ league, authority: admin.publicKey })
+      .remainingAccounts(winnerEntries(league, winners))
       .rpc();
     state = await program.account.league.fetch(league);
     assert.deepStrictEqual(state.status, { resolved: {} });
@@ -192,9 +203,11 @@ describe("league-escrow", () => {
       .accountsPartial({ league, admin: admin.publicKey })
       .rpc();
 
+    const winners = [p1.publicKey];
     await program.methods
-      .resolveLeague([p1.publicKey], [ENTRY_FEE])
+      .resolveLeague(winners, [ENTRY_FEE])
       .accountsPartial({ league, authority: oracle.publicKey })
+      .remainingAccounts(winnerEntries(league, winners))
       .signers([oracle])
       .rpc();
 
@@ -226,10 +239,12 @@ describe("league-escrow", () => {
       .rpc();
 
     const outsider = await fundedKeypair();
+    const winners = [p1.publicKey];
     await expectError(
       program.methods
-        .resolveLeague([p1.publicKey], [ENTRY_FEE])
+        .resolveLeague(winners, [ENTRY_FEE])
         .accountsPartial({ league, authority: outsider.publicKey })
+        .remainingAccounts(winnerEntries(league, winners))
         .signers([outsider])
         .rpc(),
       "Unauthorized"
@@ -253,10 +268,12 @@ describe("league-escrow", () => {
     const { league } = await createLeague();
     const p1 = await fundedKeypair();
     await join(league, p1);
+    const winners = [p1.publicKey];
     await expectError(
       program.methods
-        .resolveLeague([p1.publicKey], [ENTRY_FEE])
+        .resolveLeague(winners, [ENTRY_FEE])
         .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts(winnerEntries(league, winners))
         .rpc(),
       "LeagueNotLocked"
     );
@@ -270,12 +287,33 @@ describe("league-escrow", () => {
       .lockLeague()
       .accountsPartial({ league, admin: admin.publicKey })
       .rpc();
+    const winners = [p1.publicKey];
     await expectError(
       program.methods
-        .resolveLeague([p1.publicKey], [ENTRY_FEE.muln(5)])
+        .resolveLeague(winners, [ENTRY_FEE.muln(5)])
         .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts(winnerEntries(league, winners))
         .rpc(),
-      "PayoutExceedsPot"
+      "PayoutMustEqualPot"
+    );
+  });
+
+  it("rejects a payout split that is below the pot", async () => {
+    const { league } = await createLeague();
+    const p1 = await fundedKeypair();
+    await join(league, p1);
+    await program.methods
+      .lockLeague()
+      .accountsPartial({ league, admin: admin.publicKey })
+      .rpc();
+    const winners = [p1.publicKey];
+    await expectError(
+      program.methods
+        .resolveLeague(winners, [ENTRY_FEE.subn(1)])
+        .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts(winnerEntries(league, winners))
+        .rpc(),
+      "PayoutMustEqualPot"
     );
   });
 
@@ -289,9 +327,13 @@ describe("league-escrow", () => {
       .lockLeague()
       .accountsPartial({ league, admin: admin.publicKey })
       .rpc();
+    // Resolve full pot: both players as winners.
+    const pot = ENTRY_FEE.muln(2);
+    const winners = [p1.publicKey, p2.publicKey];
     await program.methods
-      .resolveLeague([p1.publicKey], [ENTRY_FEE])
+      .resolveLeague(winners, [pot.muln(60).divn(100), pot.sub(pot.muln(60).divn(100))])
       .accountsPartial({ league, authority: admin.publicKey })
+      .remainingAccounts(winnerEntries(league, winners))
       .rpc();
 
     await program.methods
@@ -315,16 +357,19 @@ describe("league-escrow", () => {
     const p1 = await fundedKeypair();
     const p2 = await fundedKeypair();
     await join(league, p1);
-    await join(league, p2);
     await program.methods
       .lockLeague()
       .accountsPartial({ league, admin: admin.publicKey })
       .rpc();
+    // Resolve full pot with only p1 as winner.
+    const winners = [p1.publicKey];
     await program.methods
-      .resolveLeague([p1.publicKey], [ENTRY_FEE])
+      .resolveLeague(winners, [ENTRY_FEE])
       .accountsPartial({ league, authority: admin.publicKey })
+      .remainingAccounts(winnerEntries(league, winners))
       .rpc();
 
+    // p2 never joined and is not a winner.
     await expectError(
       program.methods
         .claimPayout()
@@ -342,4 +387,82 @@ describe("league-escrow", () => {
     // The per-player entry PDA already exists, so re-joining fails at init.
     await expectError(join(league, p1), "already in use");
   });
+
+  it("rejects a non-participant winner (WinnerNotParticipant)", async () => {
+    const { league } = await createLeague();
+    const p1 = await fundedKeypair();
+    const outsider = await fundedKeypair();
+    await join(league, p1);
+    await program.methods
+      .lockLeague()
+      .accountsPartial({ league, admin: admin.publicKey })
+      .rpc();
+
+    // Attempt to name outsider (who never joined) as a winner.
+    // Their entry PDA does not exist, so the program should reject.
+    await expectError(
+      program.methods
+        .resolveLeague([outsider.publicKey], [ENTRY_FEE])
+        .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts([
+          {
+            pubkey: entryPda(league, outsider.publicKey),
+            isWritable: false,
+            isSigner: false,
+          },
+        ])
+        .rpc(),
+      "WinnerNotParticipant"
+    );
+  });
+
+  it("rejects a missing winner-entry account (WinnerEntryMismatch)", async () => {
+    const { league } = await createLeague();
+    const p1 = await fundedKeypair();
+    await join(league, p1);
+    await program.methods
+      .lockLeague()
+      .accountsPartial({ league, admin: admin.publicKey })
+      .rpc();
+
+    // Pass zero remaining accounts for one winner.
+    await expectError(
+      program.methods
+        .resolveLeague([p1.publicKey], [ENTRY_FEE])
+        .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts([])
+        .rpc(),
+      "WinnerEntryMismatch"
+    );
+  });
+
+  it("rejects a misordered winner-entry account (WinnerEntryMismatch)", async () => {
+    const { league } = await createLeague();
+    const p1 = await fundedKeypair();
+    const p2 = await fundedKeypair();
+    await join(league, p1);
+    await join(league, p2);
+    await program.methods
+      .lockLeague()
+      .accountsPartial({ league, admin: admin.publicKey })
+      .rpc();
+
+    const pot = ENTRY_FEE.muln(2);
+    const w1 = pot.muln(60).divn(100);
+    const w2 = pot.sub(w1);
+
+    // Pass entry accounts in reversed order (p2 entry for p1 winner slot).
+    await expectError(
+      program.methods
+        .resolveLeague([p1.publicKey, p2.publicKey], [w1, w2])
+        .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts([
+          { pubkey: entryPda(league, p2.publicKey), isWritable: false, isSigner: false },
+          { pubkey: entryPda(league, p1.publicKey), isWritable: false, isSigner: false },
+        ])
+        .rpc(),
+      "WinnerEntryMismatch"
+    );
+  });
 });
+

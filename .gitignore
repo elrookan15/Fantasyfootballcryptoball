@@ -2,10 +2,13 @@
 /target/*
 !/target/deploy
 /target/deploy/*
-# Keep ONLY the program keypair committed so the on-chain program id stays
-# stable across machines and CI. NOTE: this key controls program upgrades —
-# for a real mainnet deployment, rotate it and manage it as a secret.
-!/target/deploy/league_escrow-keypair.json
+# Deployment keypairs must NEVER be committed — they control program upgrades.
+# Generate and store them in protected CI/CD secrets or a hardware wallet.
+# NOTE: target/deploy/league_escrow-keypair.json was previously committed and
+# must be treated as compromised. Rotate the upgrade authority before any
+# value-bearing deployment. Removal from Git history requires repository-owner
+# action (e.g., git-filter-repo or BFG Repo Cleaner) and a force-push.
+target/deploy/*-keypair.json
 .anchor/
 test-ledger/
 **/*.rs.bk

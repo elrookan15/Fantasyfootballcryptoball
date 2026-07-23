@@ -66,3 +66,25 @@ jobs:
 
       - name: Run Anchor tests
         run: anchor test
+
+  frontend:
+    name: Build & type-check frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Next.js app
+        run: npm run build

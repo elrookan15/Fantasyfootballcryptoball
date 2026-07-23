@@ -1226,6 +1226,21 @@ export type LeagueEscrow = {
       "msg": "Total payout exceeds the collected pot"
     },
     {
+      "code": 6018,
+      "name": "payoutMustEqualPot",
+      "msg": "Total payout must equal the full collected pot"
+    },
+    {
+      "code": 6019,
+      "name": "winnerEntryMismatch",
+      "msg": "Winner entry accounts do not match the winner list"
+    },
+    {
+      "code": 6020,
+      "name": "winnerNotParticipant",
+      "msg": "Winner is not a participant in this league"
+    },
+    {
       "code": 6013,
       "name": "notAWinner",
       "msg": "Caller is not a winner of this league"

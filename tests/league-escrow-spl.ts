@@ -61,6 +61,18 @@ describe("league-escrow (USDC / SPL token)", () => {
     )[0];
   }
 
+  /** Build the remainingAccounts array for resolveLeague, one entry per winner. */
+  function winnerEntries(
+    league: PublicKey,
+    winners: PublicKey[]
+  ): { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] {
+    return winners.map((w) => ({
+      pubkey: entryPda(league, w),
+      isWritable: false,
+      isSigner: false,
+    }));
+  }
+
   const vaultAta = (league: PublicKey) =>
     getAssociatedTokenAddressSync(mint, league, true);
 
@@ -209,9 +221,11 @@ describe("league-escrow (USDC / SPL token)", () => {
     const pot = ENTRY_FEE.muln(2);
     const w1 = pot.muln(60).divn(100);
     const w2 = pot.sub(w1);
+    const winners = [p1.publicKey, p2.publicKey];
     await program.methods
-      .resolveLeague([p1.publicKey, p2.publicKey], [w1, w2])
+      .resolveLeague(winners, [w1, w2])
       .accountsPartial({ league, authority: admin.publicKey })
+      .remainingAccounts(winnerEntries(league, winners))
       .rpc();
 
     await claimTx(league, vault, p1).rpc();
@@ -242,10 +256,12 @@ describe("league-escrow (USDC / SPL token)", () => {
     await lock(league);
 
     const outsider = await fundedKeypair();
+    const winners = [p1.publicKey];
     await expectError(
       program.methods
-        .resolveLeague([p1.publicKey], [ENTRY_FEE])
+        .resolveLeague(winners, [ENTRY_FEE])
         .accountsPartial({ league, authority: outsider.publicKey })
+        .remainingAccounts(winnerEntries(league, winners))
         .signers([outsider])
         .rpc(),
       "Unauthorized"
@@ -259,9 +275,15 @@ describe("league-escrow (USDC / SPL token)", () => {
     await join(league, vault, p1);
     await join(league, vault, p2);
     await lock(league);
+    // Resolve full pot with both players.
+    const pot = ENTRY_FEE.muln(2);
+    const w1 = pot.muln(60).divn(100);
+    const w2 = pot.sub(w1);
+    const winners = [p1.publicKey, p2.publicKey];
     await program.methods
-      .resolveLeague([p1.publicKey], [ENTRY_FEE])
+      .resolveLeague(winners, [w1, w2])
       .accountsPartial({ league, authority: admin.publicKey })
+      .remainingAccounts(winnerEntries(league, winners))
       .rpc();
 
     await claimTx(league, vault, p1).rpc();
@@ -285,4 +307,60 @@ describe("league-escrow (USDC / SPL token)", () => {
       "WrongCurrency"
     );
   });
+
+  it("rejects a payout split that exceeds the pot (USDC)", async () => {
+    const { league, vault } = await createLeague();
+    const p1 = await playerWithTokens(ENTRY_FEE);
+    await join(league, vault, p1);
+    await lock(league);
+    const winners = [p1.publicKey];
+    await expectError(
+      program.methods
+        .resolveLeague(winners, [ENTRY_FEE.muln(5)])
+        .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts(winnerEntries(league, winners))
+        .rpc(),
+      "PayoutMustEqualPot"
+    );
+  });
+
+  it("rejects a payout split that is below the pot (USDC)", async () => {
+    const { league, vault } = await createLeague();
+    const p1 = await playerWithTokens(ENTRY_FEE);
+    await join(league, vault, p1);
+    await lock(league);
+    const winners = [p1.publicKey];
+    await expectError(
+      program.methods
+        .resolveLeague(winners, [ENTRY_FEE.subn(1)])
+        .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts(winnerEntries(league, winners))
+        .rpc(),
+      "PayoutMustEqualPot"
+    );
+  });
+
+  it("rejects a non-participant winner (WinnerNotParticipant, USDC)", async () => {
+    const { league, vault } = await createLeague();
+    const p1 = await playerWithTokens(ENTRY_FEE);
+    const outsider = await fundedKeypair();
+    await join(league, vault, p1);
+    await lock(league);
+
+    await expectError(
+      program.methods
+        .resolveLeague([outsider.publicKey], [ENTRY_FEE])
+        .accountsPartial({ league, authority: admin.publicKey })
+        .remainingAccounts([
+          {
+            pubkey: entryPda(league, outsider.publicKey),
+            isWritable: false,
+            isSigner: false,
+          },
+        ])
+        .rpc(),
+      "WinnerNotParticipant"
+    );
+  });
 });
+
