@@ -239,9 +239,14 @@ const DraftRoom: React.FC<{ setActiveTab: (t: string) => void }> = ({ setActiveT
 
   const handleAnalyzeRoster = async () => {
     setIsAnalyzingRoster(true);
-    const result = await analyzeRoster(lineup.map(p => ({ ...p, ammSalary: calculateAMMPrice(p.salary, p.ownership) } as any)));
-    setRosterAnalysis(result as RosterAnalysis);
-    setIsAnalyzingRoster(false);
+    try {
+      const result = await analyzeRoster(lineup.map(p => ({ ...p, ammSalary: calculateAMMPrice(p.salary, p.ownership) } as any)));
+      if (result) setRosterAnalysis(result as RosterAnalysis);
+    } catch (err) {
+      console.error("Roster analysis failed:", err);
+    } finally {
+      setIsAnalyzingRoster(false);
+    }
   };
 
   const runAssistantGM = async () => {
@@ -250,14 +255,19 @@ const DraftRoom: React.FC<{ setActiveTab: (t: string) => void }> = ({ setActiveT
       .filter(p => !lineup.some(lp => lp.id === p.id))
       .map(p => ({ ...p, salary: p.ammSalary }));
 
-    const result = await getAssistantGMSuggestion(
-      contextPlayers as any,
-      budget - currentCost,
-      selectedStrategy,
-      lineup.map(p => ({ ...p, salary: calculateAMMPrice(p.salary, p.ownership) })) as any
-    );
-    if (result) setAiRecommendation(result as AIRecommendation);
-    setIsAnalyzing(false);
+    try {
+      const result = await getAssistantGMSuggestion(
+        contextPlayers as any,
+        budget - currentCost,
+        selectedStrategy,
+        lineup.map(p => ({ ...p, salary: calculateAMMPrice(p.salary, p.ownership) })) as any
+      );
+      if (result) setAiRecommendation(result as AIRecommendation);
+    } catch (err) {
+      console.error("Assistant GM suggestion failed:", err);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const saveCurrentLineup = () => {
@@ -1088,7 +1098,7 @@ const DraftRoom: React.FC<{ setActiveTab: (t: string) => void }> = ({ setActiveT
                  {isFetchingIntel ? (
                    <span className="animate-pulse flex items-center gap-2"><div className="w-2 h-2 bg-cyan-500 rounded-full animate-ping"></div> Syncing search data...</span>
                  ) : (
-                   <div dangerouslySetInnerHTML={{ __html: playerIntel.intel.replace(/\n/g, '<br/>') }} />
+                   <div className="whitespace-pre-wrap">{playerIntel.intel}</div>
                  )}
               </div>
            </div>

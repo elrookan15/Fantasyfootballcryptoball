@@ -54,9 +54,15 @@ const Dashboard: React.FC<{ setActiveTab: (t: string) => void }> = ({ setActiveT
   useEffect(() => {
     const fetchNews = async () => {
       setLoading(true);
-      const res = await searchGroundingFast("Top fantasy sports and crypto market news for today.");
-      setNews(res);
-      setLoading(false);
+      try {
+        const res = await searchGroundingFast("Top fantasy sports and crypto market news for today.");
+        setNews(res);
+      } catch (err) {
+        console.error("Failed to fetch market news feed:", err);
+        setNews(null);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchNews();
   }, []);
