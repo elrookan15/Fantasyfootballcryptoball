@@ -327,7 +327,7 @@ pub mod league_escrow {
                 .try_borrow_data()
                 .map_err(|_| error!(EscrowError::WinnerNotParticipant))?;
             // Skip the 8-byte Anchor discriminator.
-            let entry = PlayerEntry::try_deserialize(&mut &data[8..])
+            let entry = PlayerEntry::try_deserialize(&mut &data[..])
                 .map_err(|_| error!(EscrowError::WinnerNotParticipant))?;
             require_keys_eq!(
                 entry.league,
