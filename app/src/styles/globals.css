@@ -8,6 +8,7 @@
   --green: #2ec27e;
   --amber: #e6a23c;
   --purple: #a06bff;
+  --red: #e5484d;
 }
 
 * {
@@ -122,6 +123,14 @@ button.ghost:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
+button.danger {
+  background: var(--red);
+}
+
+button.danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
 button {
   background: var(--accent);
   color: white;
@@ -198,6 +207,11 @@ button:disabled {
 .pill-resolved {
   background: rgba(160, 107, 255, 0.15);
   color: var(--purple);
+}
+
+.pill-cancelled {
+  background: rgba(229, 72, 77, 0.15);
+  color: var(--red);
 }
 
 .mono {

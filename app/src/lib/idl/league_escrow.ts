@@ -14,6 +14,60 @@ export type LeagueEscrow = {
   },
   "instructions": [
     {
+      "name": "cancelLeague",
+      "docs": [
+        "Cancel an under-subscribed or otherwise abandoned league. Admin only,",
+        "and only while the league is still `Open` (before a lock). Players can",
+        "then reclaim their deposits via `refund` / `refund_spl`."
+      ],
+      "discriminator": [
+        64,
+        102,
+        88,
+        102,
+        21,
+        206,
+        58,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "league",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  97,
+                  103,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "league.admin",
+                "account": "league"
+              },
+              {
+                "kind": "account",
+                "path": "league.league_id",
+                "account": "league"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "claimPayout",
       "docs": [
         "Withdraw the signer's payout from escrow. Each winner can claim once."
@@ -995,6 +1049,366 @@ export type LeagueEscrow = {
       "args": []
     },
     {
+      "name": "refund",
+      "docs": [
+        "Reclaim a player's SOL deposit from a cancelled league. Closes the",
+        "caller's `PlayerEntry` PDA back to themselves (refunding its rent too),",
+        "which also makes a second refund attempt impossible."
+      ],
+      "discriminator": [
+        2,
+        96,
+        183,
+        251,
+        63,
+        208,
+        46,
+        46
+      ],
+      "accounts": [
+        {
+          "name": "league",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  97,
+                  103,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "league.admin",
+                "account": "league"
+              },
+              {
+                "kind": "account",
+                "path": "league.league_id",
+                "account": "league"
+              }
+            ]
+          }
+        },
+        {
+          "name": "playerEntry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  110,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "league"
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "refundSpl",
+      "docs": [
+        "Reclaim a player's SPL-token deposit from a cancelled league. Closes",
+        "the caller's `PlayerEntry` PDA back to themselves (refunding its rent",
+        "too), which also makes a second refund attempt impossible."
+      ],
+      "discriminator": [
+        121,
+        79,
+        57,
+        29,
+        6,
+        199,
+        238,
+        125
+      ],
+      "accounts": [
+        {
+          "name": "league",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  97,
+                  103,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "league.admin",
+                "account": "league"
+              },
+              {
+                "kind": "account",
+                "path": "league.league_id",
+                "account": "league"
+              }
+            ]
+          }
+        },
+        {
+          "name": "playerEntry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  110,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "league"
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "league"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "playerTokenAccount",
+          "docs": [
+            "Player's own ATA, created on demand if they don't have one yet."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "player"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "resolveLeague",
       "docs": [
         "Declare winner(s) and their payout split. Callable by the admin or the",
@@ -1094,6 +1508,19 @@ export type LeagueEscrow = {
   ],
   "events": [
     {
+      "name": "leagueCancelled",
+      "discriminator": [
+        233,
+        183,
+        213,
+        189,
+        51,
+        243,
+        97,
+        150
+      ]
+    },
+    {
       "name": "leagueCreated",
       "discriminator": [
         179,
@@ -1156,6 +1583,19 @@ export type LeagueEscrow = {
         210,
         183,
         38
+      ]
+    },
+    {
+      "name": "playerRefunded",
+      "discriminator": [
+        83,
+        218,
+        165,
+        174,
+        105,
+        50,
+        123,
+        107
       ]
     }
   ],
@@ -1264,6 +1704,16 @@ export type LeagueEscrow = {
       "code": 6017,
       "name": "wrongCurrency",
       "msg": "Instruction currency does not match the league's currency"
+    },
+    {
+      "code": 6021,
+      "name": "cancelNotAllowed",
+      "msg": "League can only be cancelled while still open (before locking)"
+    },
+    {
+      "code": 6022,
+      "name": "leagueNotCancelled",
+      "msg": "League must be cancelled before deposits can be refunded"
     }
   ],
   "types": [
@@ -1458,6 +1908,9 @@ export type LeagueEscrow = {
           },
           {
             "name": "resolved"
+          },
+          {
+            "name": "cancelled"
           }
         ]
       }
@@ -1542,6 +1995,46 @@ export type LeagueEscrow = {
           {
             "name": "claimed",
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "leagueCancelled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "league",
+            "type": "pubkey"
+          },
+          {
+            "name": "playerCount",
+            "type": "u16"
+          },
+          {
+            "name": "totalPot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "playerRefunded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "league",
+            "type": "pubkey"
+          },
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           }
         ]
       }
