@@ -422,6 +422,123 @@ pub mod league_escrow {
         Ok(())
     }
 
+    /// Cancel an under-subscribed or otherwise abandoned league. Admin only,
+    /// and only while the league is still `Open` (before a lock). Players can
+    /// then reclaim their deposits via [`refund`] / [`refund_spl`].
+    pub fn cancel_league(ctx: Context<CancelLeague>) -> Result<()> {
+        let league = &mut ctx.accounts.league;
+        require!(
+            league.status == LeagueStatus::Open,
+            EscrowError::CancelNotAllowed
+        );
+        league.status = LeagueStatus::Cancelled;
+
+        emit!(LeagueCancelled {
+            league: league.key(),
+            player_count: league.player_count,
+            total_pot: league.total_pot,
+        });
+        Ok(())
+    }
+
+    /// Reclaim a player's SOL deposit from a cancelled league. Closes the
+    /// caller's `PlayerEntry` PDA back to themselves (refunding its rent too),
+    /// which also makes a second refund attempt impossible.
+    pub fn refund(ctx: Context<Refund>) -> Result<()> {
+        let player_key = ctx.accounts.player.key();
+        let league = &mut ctx.accounts.league;
+
+        require!(league.payment_mint.is_none(), EscrowError::WrongCurrency);
+        require!(
+            league.status == LeagueStatus::Cancelled,
+            EscrowError::LeagueNotCancelled
+        );
+
+        let amount = ctx.accounts.player_entry.deposited;
+
+        let league_ai = league.to_account_info();
+        let rent_reserve = Rent::get()?.minimum_balance(league_ai.data_len());
+        let escrow_balance = league_ai.lamports();
+        require!(
+            escrow_balance
+                .checked_sub(amount)
+                .ok_or(EscrowError::MathOverflow)?
+                >= rent_reserve,
+            EscrowError::InsufficientEscrow
+        );
+
+        league.total_pot = league
+            .total_pot
+            .checked_sub(amount)
+            .ok_or(EscrowError::MathOverflow)?;
+
+        **league_ai.try_borrow_mut_lamports()? = escrow_balance
+            .checked_sub(amount)
+            .ok_or(EscrowError::MathOverflow)?;
+        let player_ai = ctx.accounts.player.to_account_info();
+        let player_balance = player_ai.lamports();
+        **player_ai.try_borrow_mut_lamports()? = player_balance
+            .checked_add(amount)
+            .ok_or(EscrowError::MathOverflow)?;
+
+        emit!(PlayerRefunded {
+            league: league.key(),
+            player: player_key,
+            amount,
+        });
+        Ok(())
+    }
+
+    /// Reclaim a player's SPL-token deposit from a cancelled league. Closes
+    /// the caller's `PlayerEntry` PDA back to themselves (refunding its rent
+    /// too), which also makes a second refund attempt impossible.
+    pub fn refund_spl(ctx: Context<RefundSpl>) -> Result<()> {
+        let player_key = ctx.accounts.player.key();
+        let amount = ctx.accounts.player_entry.deposited;
+
+        {
+            let league = &mut ctx.accounts.league;
+            require!(
+                league.status == LeagueStatus::Cancelled,
+                EscrowError::LeagueNotCancelled
+            );
+            require!(
+                ctx.accounts.vault.amount >= amount,
+                EscrowError::InsufficientEscrow
+            );
+            league.total_pot = league
+                .total_pot
+                .checked_sub(amount)
+                .ok_or(EscrowError::MathOverflow)?;
+        }
+
+        let admin = ctx.accounts.league.admin;
+        let league_id = ctx.accounts.league.league_id.to_le_bytes();
+        let bump = ctx.accounts.league.bump;
+        let signer_seeds: &[&[&[u8]]] =
+            &[&[b"league", admin.as_ref(), &league_id, &[bump]]];
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                SplTransfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.player_token_account.to_account_info(),
+                    authority: ctx.accounts.league.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            amount,
+        )?;
+
+        emit!(PlayerRefunded {
+            league: ctx.accounts.league.key(),
+            player: player_key,
+            amount,
+        });
+        Ok(())
+    }
+
     /// Withdraw the signer's SPL-token payout from the vault. Each winner can
     /// claim once. The league PDA signs the transfer out of the vault.
     pub fn claim_payout_spl(ctx: Context<ClaimPayoutSpl>) -> Result<()> {
@@ -554,6 +671,74 @@ pub struct ClaimPayout<'info> {
     pub league: Account<'info, League>,
     #[account(mut)]
     pub player: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct CancelLeague<'info> {
+    #[account(
+        mut,
+        has_one = admin @ EscrowError::Unauthorized,
+        seeds = [b"league", league.admin.as_ref(), &league.league_id.to_le_bytes()],
+        bump = league.bump
+    )]
+    pub league: Account<'info, League>,
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct Refund<'info> {
+    #[account(
+        mut,
+        seeds = [b"league", league.admin.as_ref(), &league.league_id.to_le_bytes()],
+        bump = league.bump
+    )]
+    pub league: Account<'info, League>,
+    #[account(
+        mut,
+        close = player,
+        seeds = [b"entry", league.key().as_ref(), player.key().as_ref()],
+        bump = player_entry.bump
+    )]
+    pub player_entry: Account<'info, PlayerEntry>,
+    #[account(mut)]
+    pub player: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct RefundSpl<'info> {
+    #[account(
+        mut,
+        constraint = league.payment_mint == Some(mint.key()) @ EscrowError::WrongCurrency,
+        seeds = [b"league", league.admin.as_ref(), &league.league_id.to_le_bytes()],
+        bump = league.bump
+    )]
+    pub league: Account<'info, League>,
+    #[account(
+        mut,
+        close = player,
+        seeds = [b"entry", league.key().as_ref(), player.key().as_ref()],
+        bump = player_entry.bump
+    )]
+    pub player_entry: Account<'info, PlayerEntry>,
+    #[account(mut)]
+    pub player: Signer<'info>,
+    pub mint: Account<'info, Mint>,
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = league,
+    )]
+    pub vault: Account<'info, TokenAccount>,
+    #[account(
+        init_if_needed,
+        payer = player,
+        associated_token::mint = mint,
+        associated_token::authority = player,
+    )]
+    pub player_token_account: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -708,6 +893,7 @@ pub enum LeagueStatus {
     Open,
     Locked,
     Resolved,
+    Cancelled,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, Debug)]
@@ -759,6 +945,20 @@ pub struct PayoutClaimed {
     pub amount: u64,
 }
 
+#[event]
+pub struct LeagueCancelled {
+    pub league: Pubkey,
+    pub player_count: u16,
+    pub total_pot: u64,
+}
+
+#[event]
+pub struct PlayerRefunded {
+    pub league: Pubkey,
+    pub player: Pubkey,
+    pub amount: u64,
+}
+
 #[error_code]
 pub enum EscrowError {
     #[msg("Entry fee must be greater than zero")]
@@ -803,4 +1003,8 @@ pub enum EscrowError {
     MathOverflow,
     #[msg("Instruction currency does not match the league's currency")]
     WrongCurrency,
+    #[msg("League can only be cancelled while still open (before locking)")]
+    CancelNotAllowed,
+    #[msg("League must be cancelled before deposits can be refunded")]
+    LeagueNotCancelled,
 }

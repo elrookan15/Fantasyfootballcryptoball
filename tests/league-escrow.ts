@@ -464,5 +464,112 @@ describe("league-escrow", () => {
       "WinnerEntryMismatch"
     );
   });
+
+  it("cancels an open league and lets both players refund their deposit (rent included)", async () => {
+    const { league } = await createLeague();
+    const p1 = await fundedKeypair();
+    const p2 = await fundedKeypair();
+    await join(league, p1);
+    await join(league, p2);
+
+    await program.methods
+      .cancelLeague()
+      .accountsPartial({ league, admin: admin.publicKey })
+      .rpc();
+
+    let state = await program.account.league.fetch(league);
+    assert.deepStrictEqual(state.status, { cancelled: {} });
+
+    const p1Before = await connection.getBalance(p1.publicKey);
+    await program.methods
+      .refund()
+      .accountsPartial({
+        league,
+        playerEntry: entryPda(league, p1.publicKey),
+        player: p1.publicKey,
+      })
+      .signers([p1])
+      .rpc();
+    const p1After = await connection.getBalance(p1.publicKey);
+    // Gets back the entry fee plus the PlayerEntry rent, minus the tx fee.
+    assert.ok(p1After > p1Before + ENTRY_FEE.toNumber() - 10_000);
+
+    await program.methods
+      .refund()
+      .accountsPartial({
+        league,
+        playerEntry: entryPda(league, p2.publicKey),
+        player: p2.publicKey,
+      })
+      .signers([p2])
+      .rpc();
+
+    state = await program.account.league.fetch(league);
+    assert.ok(state.totalPot.eqn(0));
+
+    // A second refund attempt has no PlayerEntry PDA left to close against.
+    await expectError(
+      program.methods
+        .refund()
+        .accountsPartial({
+          league,
+          playerEntry: entryPda(league, p1.publicKey),
+          player: p1.publicKey,
+        })
+        .signers([p1])
+        .rpc(),
+      "AccountNotInitialized"
+    );
+  });
+
+  it("rejects cancel from a non-admin signer", async () => {
+    const { league } = await createLeague();
+    const outsider = await fundedKeypair();
+    await expectError(
+      program.methods
+        .cancelLeague()
+        .accountsPartial({ league, admin: outsider.publicKey })
+        .signers([outsider])
+        .rpc(),
+      "Unauthorized"
+    );
+  });
+
+  it("rejects cancelling a locked league", async () => {
+    const { league } = await createLeague();
+    const p1 = await fundedKeypair();
+    await join(league, p1);
+    await program.methods
+      .lockLeague()
+      .accountsPartial({ league, admin: admin.publicKey })
+      .rpc();
+
+    await expectError(
+      program.methods
+        .cancelLeague()
+        .accountsPartial({ league, admin: admin.publicKey })
+        .rpc(),
+      "CancelNotAllowed"
+    );
+  });
+
+  it("rejects a refund before the league is cancelled", async () => {
+    const { league } = await createLeague();
+    const p1 = await fundedKeypair();
+    await join(league, p1);
+
+    await expectError(
+      program.methods
+        .refund()
+        .accountsPartial({
+          league,
+          playerEntry: entryPda(league, p1.publicKey),
+          player: p1.publicKey,
+        })
+        .signers([p1])
+        .rpc(),
+      "LeagueNotCancelled"
+    );
+  });
 });
 

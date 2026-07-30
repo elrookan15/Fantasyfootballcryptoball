@@ -362,5 +362,71 @@ describe("league-escrow (USDC / SPL token)", () => {
       "WinnerNotParticipant"
     );
   });
+
+  it("cancels an open league and lets a player refund their USDC deposit", async () => {
+    const { league, vault } = await createLeague();
+    const p1 = await playerWithTokens(ENTRY_FEE);
+    await join(league, vault, p1);
+
+    await program.methods
+      .cancelLeague()
+      .accountsPartial({ league, admin: admin.publicKey })
+      .rpc();
+
+    let state = await program.account.league.fetch(league);
+    assert.deepStrictEqual(state.status, { cancelled: {} });
+
+    await program.methods
+      .refundSpl()
+      .accountsPartial({
+        league,
+        playerEntry: entryPda(league, p1.publicKey),
+        player: p1.publicKey,
+        mint,
+        vault,
+        playerTokenAccount: getAssociatedTokenAddressSync(
+          mint,
+          p1.publicKey
+        ),
+        ...tokenAccounts,
+      })
+      .signers([p1])
+      .rpc();
+
+    const p1Token = await getAccount(
+      connection,
+      getAssociatedTokenAddressSync(mint, p1.publicKey)
+    );
+    assert.strictEqual(p1Token.amount.toString(), ENTRY_FEE.toString());
+
+    state = await program.account.league.fetch(league);
+    assert.ok(state.totalPot.eqn(0));
+  });
+
+  it("rejects a USDC refund before the league is cancelled", async () => {
+    const { league, vault } = await createLeague();
+    const p1 = await playerWithTokens(ENTRY_FEE);
+    await join(league, vault, p1);
+
+    await expectError(
+      program.methods
+        .refundSpl()
+        .accountsPartial({
+          league,
+          playerEntry: entryPda(league, p1.publicKey),
+          player: p1.publicKey,
+          mint,
+          vault,
+          playerTokenAccount: getAssociatedTokenAddressSync(
+            mint,
+            p1.publicKey
+          ),
+          ...tokenAccounts,
+        })
+        .signers([p1])
+        .rpc(),
+      "LeagueNotCancelled"
+    );
+  });
 });
 
