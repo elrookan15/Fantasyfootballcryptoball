@@ -76,10 +76,11 @@ export function playerAta(mint: PublicKey, owner: PublicKey): PublicKey {
   return getAssociatedTokenAddressSync(mint, owner);
 }
 
-export type LeagueStatus = "open" | "locked" | "resolved";
+export type LeagueStatus = "open" | "locked" | "resolved" | "cancelled";
 
 export function statusLabel(status: Record<string, unknown>): LeagueStatus {
   if ("locked" in status) return "locked";
   if ("resolved" in status) return "resolved";
+  if ("cancelled" in status) return "cancelled";
   return "open";
 }

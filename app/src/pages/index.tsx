@@ -307,6 +307,49 @@ export default function Home() {
         .rpc();
     });
 
+  const onCancel = () =>
+    run("Cancel league", async () => {
+      const program = getProgram(connection, wallet!);
+      return program.methods
+        .cancelLeague()
+        .accountsPartial({
+          league: new PublicKey(league!.address),
+          admin: wallet!.publicKey,
+        })
+        .rpc();
+    });
+
+  const onRefund = () =>
+    run("Refund deposit", async () => {
+      const program = getProgram(connection, wallet!);
+      const pda = new PublicKey(league!.address);
+      if (league!.paymentMint === null) {
+        return program.methods
+          .refund()
+          .accountsPartial({
+            league: pda,
+            playerEntry: entryPda(pda, wallet!.publicKey),
+            player: wallet!.publicKey,
+          })
+          .rpc();
+      }
+      const mint = new PublicKey(league!.paymentMint);
+      return program.methods
+        .refundSpl()
+        .accountsPartial({
+          league: pda,
+          playerEntry: entryPda(pda, wallet!.publicKey),
+          player: wallet!.publicKey,
+          mint,
+          vault: new PublicKey(league!.vault!),
+          playerTokenAccount: playerAta(mint, wallet!.publicKey),
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    });
+
   const onResolve = () =>
     run("Resolve league", async () => {
       const program = getProgram(connection, wallet!);
@@ -583,6 +626,12 @@ export default function Home() {
               >
                 Claim payout
               </button>
+              <button
+                disabled={!wallet || busy || league.status !== "cancelled"}
+                onClick={onRefund}
+              >
+                Refund my deposit
+              </button>
               {isAdmin && (
                 <button
                   disabled={busy || league.status !== "open"}
@@ -591,7 +640,23 @@ export default function Home() {
                   Lock (admin)
                 </button>
               )}
+              {isAdmin && (
+                <button
+                  className="danger"
+                  disabled={busy || league.status !== "open"}
+                  onClick={onCancel}
+                >
+                  Cancel league (admin)
+                </button>
+              )}
             </div>
+            {league.status === "cancelled" && (
+              <p className="hint">
+                This league was cancelled before locking. Players who joined
+                can reclaim their deposit with &ldquo;Refund my deposit&rdquo;
+                above.
+              </p>
+            )}
 
             {isAuthority && league.status === "locked" && (
               <div className="resolve">
