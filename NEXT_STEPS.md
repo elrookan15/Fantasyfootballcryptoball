@@ -31,20 +31,25 @@ point.
   **or** an SPL token (USDC) via `create_league_spl` / `join_league_spl` /
   `claim_payout_spl`, using an ATA vault owned by the league PDA. The SOL path is
   unchanged and both are covered by tests.
+- **On-chain winner verification at resolve.** ✅ `resolve_league` derives each
+  winner's `PlayerEntry` PDA and asserts it belongs to that league/player before
+  recording payouts, instead of trusting the admin/oracle's word alone.
+- **Refund / cancel path.** ✅ `cancel_league` (admin-only, only while `Open`)
+  moves a league to `Cancelled`; `refund` / `refund_spl` then let each player
+  reclaim their exact deposit (SOL or SPL) and close their `PlayerEntry` PDA
+  back to themselves, recovering its rent too. Covered by tests in both suites.
 
 ## Natural follow-ups to the escrow program itself
 
 These harden/extend what already exists and are the most logical next commits:
 
-1. **On-chain winner verification at resolve.** `resolve_league` currently trusts
-   the admin/oracle to name winners. Pass each winner's `PlayerEntry` PDA as a
-   remaining account and assert membership before recording payouts.
-2. **Refund / cancel path.** Let the admin cancel an under-subscribed league and
-   allow players to reclaim deposits (needed before a lock happens).
-4. **Rent reclamation.** Close the `League` and `PlayerEntry` accounts after all
-   payouts are claimed and return the rent to the payer(s).
-5. **Deadlines / timestamps.** Add join/lock deadlines enforced by the on-chain
+1. **Rent reclamation for resolved leagues.** Close the `League` account after
+   all payouts are claimed and return its rent to the admin (the refund path
+   already reclaims `PlayerEntry` rent; this extends the idea to the resolved
+   happy path).
+2. **Deadlines / timestamps.** Add join/lock deadlines enforced by the on-chain
    clock rather than relying solely on a manual admin `lock_league` call.
-6. **Events → indexer.** Index the emitted events (`LeagueCreated`,
-   `PlayerJoined`, `LeagueResolved`, `PayoutClaimed`) for a richer UI and history.
-7. **Security review.** Independent audit + fuzzing before any mainnet value.
+3. **Events → indexer.** Index the emitted events (`LeagueCreated`,
+   `PlayerJoined`, `LeagueResolved`, `PayoutClaimed`, `LeagueCancelled`,
+   `PlayerRefunded`) for a richer UI and history.
+4. **Security review.** Independent audit + fuzzing before any mainnet value.

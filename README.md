@@ -72,6 +72,9 @@ and any SPL token (e.g. USDC). Fund movement is currency-specific; the lifecycle
 | `resolve_league`    | admin or oracle | Records winner(s) and their split (`Locked → Resolved`). Validated: sum ≤ pot, no duplicates, count ≤ players. Currency-agnostic. |
 | `claim_payout`      | winning player  | Withdraws the caller's SOL share from the league PDA exactly once. |
 | `claim_payout_spl`  | winning player  | Transfers the caller's SPL share from the vault (signed by the league PDA) to their ATA, exactly once. |
+| `cancel_league`     | admin only      | Cancels an under-subscribed/abandoned league (`Open → Cancelled`). Only allowed before locking. |
+| `refund`            | any player      | Reclaims the caller's SOL deposit from a `Cancelled` league; closes their `PlayerEntry` PDA (rent returned) so it can't be refunded twice. |
+| `refund_spl`        | any player      | Reclaims the caller's SPL deposit from a `Cancelled` league; closes their `PlayerEntry` PDA (rent returned) so it can't be refunded twice. |
 
 Access control uses `has_one`/explicit checks; the SOL/SPL paths each guard on
 `payment_mint` (a mismatched-currency call fails with `WrongCurrency`); all
