@@ -446,6 +446,14 @@ export type LeagueEscrow = {
         {
           "name": "oracle",
           "type": "pubkey"
+        },
+        {
+          "name": "joinDeadline",
+          "type": "i64"
+        },
+        {
+          "name": "lockDeadline",
+          "type": "i64"
         }
       ]
     },
@@ -626,8 +634,81 @@ export type LeagueEscrow = {
         {
           "name": "oracle",
           "type": "pubkey"
+        },
+        {
+          "name": "joinDeadline",
+          "type": "i64"
+        },
+        {
+          "name": "lockDeadline",
+          "type": "i64"
         }
       ]
+    },
+    {
+      "name": "closeLeague",
+      "docs": [
+        "Close a fully-claimed resolved league, reclaiming rent to admin.",
+        "For SPL leagues also closes the empty vault ATA."
+      ],
+      "discriminator": [
+        163,
+        162,
+        103,
+        163,
+        245,
+        175,
+        4,
+        66
+      ],
+      "accounts": [
+        {
+          "name": "league",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  97,
+                  103,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "league.admin",
+                "account": "league"
+              },
+              {
+                "kind": "account",
+                "path": "league.league_id",
+                "account": "league"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "league"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
     },
     {
       "name": "joinLeague",
@@ -1597,6 +1678,19 @@ export type LeagueEscrow = {
         123,
         107
       ]
+    },
+    {
+      "name": "leagueClosed",
+      "discriminator": [
+        193,
+        100,
+        85,
+        7,
+        248,
+        147,
+        233,
+        68
+      ]
     }
   ],
   "errors": [
@@ -1714,6 +1808,21 @@ export type LeagueEscrow = {
       "code": 6022,
       "name": "leagueNotCancelled",
       "msg": "League must be cancelled before deposits can be refunded"
+    },
+    {
+      "code": 6023,
+      "name": "leagueNotFullyClaimed",
+      "msg": "All winners must claim their payout before the league can be closed"
+    },
+    {
+      "code": 6024,
+      "name": "joinDeadlineExceeded",
+      "msg": "The join deadline for this league has passed"
+    },
+    {
+      "code": 6025,
+      "name": "lockDeadlineExceeded",
+      "msg": "The lock deadline for this league has passed"
     }
   ],
   "types": [
@@ -1817,6 +1926,20 @@ export type LeagueEscrow = {
               "PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "joinDeadline",
+            "docs": [
+              "Unix timestamp after which joins are rejected (0 = no deadline)."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "lockDeadline",
+            "docs": [
+              "Unix timestamp after which locking is rejected (0 = no deadline)."
+            ],
+            "type": "i64"
           }
         ]
       }
@@ -2035,6 +2158,22 @@ export type LeagueEscrow = {
           {
             "name": "amount",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "leagueClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "league",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
           }
         ]
       }

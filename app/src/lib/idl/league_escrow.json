@@ -367,6 +367,71 @@
       "args": []
     },
     {
+      "name": "close_league",
+      "docs": [
+        "Close a fully-paid-out league and return its rent to the admin.",
+        "",
+        "Only callable after all winners have claimed (status == Resolved and",
+        "total_pot == 0). For SPL leagues also closes the empty vault ATA."
+      ],
+      "discriminator": [
+        57,
+        226,
+        0,
+        198,
+        100,
+        104,
+        147,
+        23
+      ],
+      "accounts": [
+        {
+          "name": "league",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  101,
+                  97,
+                  103,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "league.admin",
+                "account": "League"
+              },
+              {
+                "kind": "account",
+                "path": "league.league_id",
+                "account": "League"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": ["league"]
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "create_league",
       "docs": [
         "Initialize a new league escrow.",
@@ -440,6 +505,14 @@
         {
           "name": "oracle",
           "type": "pubkey"
+        },
+        {
+          "name": "join_deadline",
+          "type": "i64"
+        },
+        {
+          "name": "lock_deadline",
+          "type": "i64"
         }
       ]
     },
@@ -620,6 +693,14 @@
         {
           "name": "oracle",
           "type": "pubkey"
+        },
+        {
+          "name": "join_deadline",
+          "type": "i64"
+        },
+        {
+          "name": "lock_deadline",
+          "type": "i64"
         }
       ]
     },
@@ -1515,6 +1596,19 @@
       ]
     },
     {
+      "name": "LeagueClosed",
+      "discriminator": [
+        147,
+        202,
+        118,
+        52,
+        89,
+        211,
+        40,
+        2
+      ]
+    },
+    {
       "name": "LeagueCreated",
       "discriminator": [
         179,
@@ -1708,6 +1802,21 @@
       "code": 6022,
       "name": "LeagueNotCancelled",
       "msg": "League must be cancelled before deposits can be refunded"
+    },
+    {
+      "code": 6023,
+      "name": "LeagueNotFullyClaimed",
+      "msg": "All winners must claim their payouts before the league can be closed"
+    },
+    {
+      "code": 6024,
+      "name": "JoinDeadlineExceeded",
+      "msg": "Join deadline has passed; this league is no longer accepting entries"
+    },
+    {
+      "code": 6025,
+      "name": "LockDeadlineExceeded",
+      "msg": "Lock deadline has passed; the league can no longer be manually locked"
     }
   ],
   "types": [
@@ -1811,6 +1920,20 @@
               "PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "join_deadline",
+            "docs": [
+              "Unix timestamp after which no new players may join. 0 = no deadline."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "lock_deadline",
+            "docs": [
+              "Unix timestamp after which the admin may no longer manually lock the league. 0 = no deadline."
+            ],
+            "type": "i64"
           }
         ]
       }
@@ -2009,6 +2132,22 @@
           {
             "name": "total_pot",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LeagueClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "league",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
           }
         ]
       }

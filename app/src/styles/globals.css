@@ -1,10 +1,13 @@
 :root {
-  --bg: #0b0f17;
-  --card: #141b28;
-  --border: #26324a;
-  --text: #e6edf7;
-  --muted: #8ba0bf;
-  --accent: #4f8cff;
+  --bg: #060d14;
+  --card: #0d1a24;
+  --border: #1a3040;
+  --text: #e8f4f8;
+  --muted: #6fa8bf;
+  --accent: #00c9c9;
+  --accent-hover: #00a8a8;
+  --orange: #ff7c2a;
+  --orange-hover: #e8611a;
   --green: #2ec27e;
   --amber: #e6a23c;
   --purple: #a06bff;
@@ -86,7 +89,7 @@ label.grow {
 
 input,
 select {
-  background: #0d1420;
+  background: #060d14;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 9px 11px;
@@ -111,6 +114,26 @@ select:focus {
   margin: 0;
 }
 
+button {
+  background: var(--orange);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--orange-hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 button.ghost {
   background: transparent;
   border: 1px solid var(--border);
@@ -121,6 +144,8 @@ button.ghost {
 
 button.ghost:hover:not(:disabled) {
   border-color: var(--accent);
+  color: var(--accent);
+  background: transparent;
 }
 
 button.danger {
@@ -131,20 +156,13 @@ button.danger:hover:not(:disabled) {
   filter: brightness(1.1);
 }
 
-button {
+button.reclaim {
   background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
+  color: #060d14;
 }
 
-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+button.reclaim:hover:not(:disabled) {
+  background: var(--accent-hover);
 }
 
 .actions {
@@ -155,9 +173,9 @@ button:disabled {
 }
 
 .banner {
-  background: #10233d;
+  background: #061820;
   border: 1px solid var(--accent);
-  color: #cfe0ff;
+  color: #b0ecec;
   border-radius: 8px;
   padding: 10px 14px;
   margin-bottom: 16px;
@@ -252,6 +270,18 @@ button:disabled {
   margin: 10px 0 0;
 }
 
+.hint-inline {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.deadline {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
 .footer {
   color: var(--muted);
   font-size: 13px;
@@ -267,5 +297,9 @@ code {
 }
 
 .wallet-adapter-button-trigger {
-  background: var(--accent) !important;
+  background: var(--orange) !important;
+}
+
+.wallet-adapter-button-trigger:hover {
+  background: var(--orange-hover) !important;
 }
