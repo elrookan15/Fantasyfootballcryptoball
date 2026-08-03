@@ -42,6 +42,8 @@ pub mod league_escrow {
         entry_fee: u64,
         max_players: u16,
         oracle: Pubkey,
+        join_deadline: i64,
+        lock_deadline: i64,
     ) -> Result<()> {
         require!(entry_fee > 0, EscrowError::InvalidEntryFee);
         require!(max_players >= 2, EscrowError::InvalidMaxPlayers);
@@ -59,6 +61,8 @@ pub mod league_escrow {
         league.vault = Pubkey::default();
         league.winners = Vec::new();
         league.bump = ctx.bumps.league;
+        league.join_deadline = join_deadline;
+        league.lock_deadline = lock_deadline;
 
         emit!(LeagueCreated {
             league: league.key(),
@@ -82,6 +86,8 @@ pub mod league_escrow {
         entry_fee: u64,
         max_players: u16,
         oracle: Pubkey,
+        join_deadline: i64,
+        lock_deadline: i64,
     ) -> Result<()> {
         require!(entry_fee > 0, EscrowError::InvalidEntryFee);
         require!(max_players >= 2, EscrowError::InvalidMaxPlayers);
@@ -102,6 +108,8 @@ pub mod league_escrow {
         league.vault = vault_key;
         league.winners = Vec::new();
         league.bump = ctx.bumps.league;
+        league.join_deadline = join_deadline;
+        league.lock_deadline = lock_deadline;
 
         emit!(LeagueCreated {
             league: league.key(),
@@ -131,6 +139,13 @@ pub mod league_escrow {
             ctx.accounts.league.player_count < ctx.accounts.league.max_players,
             EscrowError::LeagueFull
         );
+
+        // Enforce join deadline if one was set.
+        let join_deadline = ctx.accounts.league.join_deadline;
+        if join_deadline != 0 {
+            let now = Clock::get()?.unix_timestamp;
+            require!(now <= join_deadline, EscrowError::JoinDeadlineExceeded);
+        }
 
         let entry_fee = ctx.accounts.league.entry_fee;
 
@@ -190,6 +205,13 @@ pub mod league_escrow {
             EscrowError::LeagueFull
         );
 
+        // Enforce join deadline if one was set.
+        let join_deadline = ctx.accounts.league.join_deadline;
+        if join_deadline != 0 {
+            let now = Clock::get()?.unix_timestamp;
+            require!(now <= join_deadline, EscrowError::JoinDeadlineExceeded);
+        }
+
         let entry_fee = ctx.accounts.league.entry_fee;
 
         token::transfer(
@@ -238,6 +260,13 @@ pub mod league_escrow {
             league.status == LeagueStatus::Open,
             EscrowError::LeagueNotOpen
         );
+
+        // If a lock deadline was set, prevent locking after it has passed.
+        if league.lock_deadline != 0 {
+            let now = Clock::get()?.unix_timestamp;
+            require!(now <= league.lock_deadline, EscrowError::LockDeadlineExceeded);
+        }
+
         league.status = LeagueStatus::Locked;
 
         emit!(LeagueLocked {
@@ -489,6 +518,51 @@ pub mod league_escrow {
         Ok(())
     }
 
+    /// Close a fully-paid-out league and return its rent to the admin.
+    ///
+    /// Only callable after all winners have claimed (status == Resolved and
+    /// total_pot == 0). Anchor's `close = admin` constraint transfers the
+    /// account's remaining lamports (rent reserve) to the admin and zeros the
+    /// discriminator, making the account unusable. For SPL leagues the vault
+    /// ATA should be empty by this point; its lamports are returned to admin
+    /// via a `close_account` CPI.
+    pub fn close_league(ctx: Context<CloseLeague>) -> Result<()> {
+        let league = &ctx.accounts.league;
+        require!(
+            league.status == LeagueStatus::Resolved,
+            EscrowError::LeagueNotResolved
+        );
+        require!(
+            league.total_pot == 0 && league.winners.iter().all(|s| s.claimed),
+            EscrowError::LeagueNotFullyClaimed
+        );
+
+        // For SPL leagues, close the vault ATA back to admin.
+        if league.payment_mint.is_some() {
+            let admin_key = league.admin;
+            let league_id_bytes = league.league_id.to_le_bytes();
+            let bump = league.bump;
+            let signer_seeds: &[&[&[u8]]] =
+                &[&[b"league", admin_key.as_ref(), &league_id_bytes, &[bump]]];
+
+            anchor_spl::token::close_account(CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token::CloseAccount {
+                    account: ctx.accounts.vault.to_account_info(),
+                    destination: ctx.accounts.admin.to_account_info(),
+                    authority: ctx.accounts.league.to_account_info(),
+                },
+                signer_seeds,
+            ))?;
+        }
+
+        emit!(LeagueClosed {
+            league: ctx.accounts.league.key(),
+            admin: ctx.accounts.admin.key(),
+        });
+        Ok(())
+    }
+
     /// Reclaim a player's SPL-token deposit from a cancelled league. Closes
     /// the caller's `PlayerEntry` PDA back to themselves (refunding its rent
     /// too), which also makes a second refund attempt impossible.
@@ -705,6 +779,30 @@ pub struct Refund<'info> {
 }
 
 #[derive(Accounts)]
+pub struct CloseLeague<'info> {
+    /// League account is closed to admin (rent returned) by Anchor.
+    #[account(
+        mut,
+        close = admin,
+        has_one = admin @ EscrowError::Unauthorized,
+        seeds = [b"league", league.admin.as_ref(), &league.league_id.to_le_bytes()],
+        bump = league.bump
+    )]
+    pub league: Account<'info, League>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    /// CHECK: Only required for SPL leagues; ignored (but must be provided) for
+    /// SOL leagues. Validated as the league vault via the constraint below.
+    #[account(
+        mut,
+        constraint = league.payment_mint.is_none()
+            || *vault.key == league.vault @ EscrowError::WrongCurrency
+    )]
+    pub vault: UncheckedAccount<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
 pub struct RefundSpl<'info> {
     #[account(
         mut,
@@ -862,13 +960,19 @@ pub struct League {
     pub winners: Vec<WinnerShare>,
     /// PDA bump.
     pub bump: u8,
+    /// Unix timestamp after which no new players may join. 0 = no deadline.
+    pub join_deadline: i64,
+    /// Unix timestamp after which the admin may no longer manually lock the
+    /// league (i.e., it must have been locked before this). 0 = no deadline.
+    pub lock_deadline: i64,
 }
 
 impl League {
     /// Fixed field bytes (excludes the 8-byte discriminator and the winners vec).
     /// admin + oracle + league_id + entry_fee + max_players + player_count
-    /// + status + total_pot + payment_mint(Option<Pubkey>) + vault + bump.
-    pub const BASE_LEN: usize = 32 + 32 + 8 + 8 + 2 + 2 + 1 + 8 + (1 + 32) + 32 + 1;
+    /// + status + total_pot + payment_mint(Option<Pubkey>) + vault + bump
+    /// + join_deadline + lock_deadline.
+    pub const BASE_LEN: usize = 32 + 32 + 8 + 8 + 2 + 2 + 1 + 8 + (1 + 32) + 32 + 1 + 8 + 8;
 
     /// Account size, sized to hold up to `max_players` winner shares.
     pub fn space(max_players: u16) -> usize {
@@ -953,6 +1057,12 @@ pub struct LeagueCancelled {
 }
 
 #[event]
+pub struct LeagueClosed {
+    pub league: Pubkey,
+    pub admin: Pubkey,
+}
+
+#[event]
 pub struct PlayerRefunded {
     pub league: Pubkey,
     pub player: Pubkey,
@@ -1007,4 +1117,10 @@ pub enum EscrowError {
     CancelNotAllowed,
     #[msg("League must be cancelled before deposits can be refunded")]
     LeagueNotCancelled,
+    #[msg("All winners must claim their payouts before the league can be closed")]
+    LeagueNotFullyClaimed,
+    #[msg("Join deadline has passed; this league is no longer accepting entries")]
+    JoinDeadlineExceeded,
+    #[msg("Lock deadline has passed; the league can no longer be manually locked")]
+    LockDeadlineExceeded,
 }

@@ -50,6 +50,8 @@ type LeagueView = {
   escrowBalance: number;
   status: string;
   winners: { player: string; amount: number; claimed: boolean }[];
+  joinDeadline: number;
+  lockDeadline: number;
 };
 
 type LeagueSummary = {
@@ -88,6 +90,8 @@ export default function Home() {
   const [leagueId, setLeagueId] = useState(() =>
     String(Math.floor(Math.random() * 1_000_000))
   );
+  const [joinDeadlineInput, setJoinDeadlineInput] = useState("");
+  const [lockDeadlineInput, setLockDeadlineInput] = useState("");
 
   // Browse + lookup.
   const [openLeagues, setOpenLeagues] = useState<LeagueSummary[]>([]);
@@ -140,6 +144,8 @@ export default function Home() {
             amount: w.amount.toNumber() / 10 ** decimals,
             claimed: w.claimed,
           })),
+          joinDeadline: (acc as unknown as { joinDeadline: { toNumber(): number } }).joinDeadline.toNumber(),
+          lockDeadline: (acc as unknown as { lockDeadline: { toNumber(): number } }).lockDeadline.toNumber(),
         });
       } catch (e) {
         setLeague(null);
@@ -212,6 +218,14 @@ export default function Home() {
       const players = parseInt(maxPlayers, 10);
       const newRef = { admin: wallet!.publicKey.toBase58(), leagueId };
 
+      // Parse optional deadline inputs into Unix timestamps (BN). 0 = no deadline.
+      const joinDl = joinDeadlineInput
+        ? new BN(Math.floor(new Date(joinDeadlineInput).getTime() / 1000))
+        : new BN(0);
+      const lockDl = lockDeadlineInput
+        ? new BN(Math.floor(new Date(lockDeadlineInput).getTime() / 1000))
+        : new BN(0);
+
       let sig: string;
       if (currency === "SOL") {
         sig = await program.methods
@@ -219,7 +233,9 @@ export default function Home() {
             id,
             toBaseUnits(entryFee, SOL_DECIMALS),
             players,
-            wallet!.publicKey
+            wallet!.publicKey,
+            joinDl,
+            lockDl
           )
           .accountsPartial({
             league: pda,
@@ -233,7 +249,9 @@ export default function Home() {
             id,
             toBaseUnits(entryFee, USDC_DECIMALS),
             players,
-            wallet!.publicKey
+            wallet!.publicKey,
+            joinDl,
+            lockDl
           )
           .accountsPartial({
             league: pda,
@@ -398,6 +416,24 @@ export default function Home() {
         .rpc();
     });
 
+  const onClose = () =>
+    run("Reclaim rent & close", async () => {
+      const program = getProgram(connection, wallet!);
+      const pda = new PublicKey(league!.address);
+      const vaultPubkey = league!.vault
+        ? new PublicKey(league!.vault)
+        : wallet!.publicKey; // SOL league: vault is unused, pass admin as placeholder
+      return program.methods
+        .closeLeague()
+        .accountsPartial({
+          league: pda,
+          admin: wallet!.publicKey,
+          vault: vaultPubkey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+    });
+
   const isAdmin = useMemo(
     () => !!publicKey && !!league && league.admin === publicKey.toBase58(),
     [publicKey, league]
@@ -409,6 +445,15 @@ export default function Home() {
       (league.admin === publicKey.toBase58() ||
         league.oracle === publicKey.toBase58()),
     [publicKey, league]
+  );
+  const isFullyClaimed = useMemo(
+    () =>
+      !!league &&
+      league.status === "resolved" &&
+      league.pot === 0 &&
+      league.winners.length > 0 &&
+      league.winners.every((w) => w.claimed),
+    [league]
   );
 
   return (
@@ -463,6 +508,24 @@ export default function Home() {
               <input
                 value={leagueId}
                 onChange={(e) => setLeagueId(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="row">
+            <label>
+              Join deadline <span className="hint-inline">(optional)</span>
+              <input
+                type="datetime-local"
+                value={joinDeadlineInput}
+                onChange={(e) => setJoinDeadlineInput(e.target.value)}
+              />
+            </label>
+            <label>
+              Lock deadline <span className="hint-inline">(optional)</span>
+              <input
+                type="datetime-local"
+                value={lockDeadlineInput}
+                onChange={(e) => setLockDeadlineInput(e.target.value)}
               />
             </label>
           </div>
@@ -582,6 +645,22 @@ export default function Home() {
                   {league.entryFee} {league.currency}
                 </dd>
               </div>
+              {league.joinDeadline !== 0 && (
+                <div>
+                  <dt>Join deadline</dt>
+                  <dd className="deadline">
+                    {new Date(league.joinDeadline * 1000).toLocaleString()}
+                  </dd>
+                </div>
+              )}
+              {league.lockDeadline !== 0 && (
+                <div>
+                  <dt>Lock deadline</dt>
+                  <dd className="deadline">
+                    {new Date(league.lockDeadline * 1000).toLocaleString()}
+                  </dd>
+                </div>
+              )}
             </dl>
             <p className="mono">PDA: {league.address}</p>
             {league.paymentMint && (
@@ -647,6 +726,15 @@ export default function Home() {
                   onClick={onCancel}
                 >
                   Cancel league (admin)
+                </button>
+              )}
+              {isAdmin && isFullyClaimed && (
+                <button
+                  className="reclaim"
+                  disabled={busy}
+                  onClick={onClose}
+                >
+                  Reclaim rent &amp; close (admin)
                 </button>
               )}
             </div>
