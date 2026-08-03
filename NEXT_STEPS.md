@@ -38,18 +38,21 @@ point.
   moves a league to `Cancelled`; `refund` / `refund_spl` then let each player
   reclaim their exact deposit (SOL or SPL) and close their `PlayerEntry` PDA
   back to themselves, recovering its rent too. Covered by tests in both suites.
+- **Rent reclamation for resolved leagues.** ✅ `close_league` (admin-only, after
+  all winners have claimed) closes the `League` PDA back to the admin, returning
+  its rent-exempt reserve. For SPL leagues it also closes the empty vault ATA via
+  `close_account` CPI, recovering its rent too. Covered by tests in both suites.
+- **Deadlines / timestamps.** ✅ `create_league` / `create_league_spl` now accept
+  optional `join_deadline` and `lock_deadline` Unix timestamps (pass `0` for no
+  deadline). `join_league` / `join_league_spl` reject joins after `join_deadline`;
+  `lock_league` rejects locks after `lock_deadline`. Both are enforced via
+  `Clock::get()` and covered by tests in both suites.
 
 ## Natural follow-ups to the escrow program itself
 
 These harden/extend what already exists and are the most logical next commits:
 
-1. **Rent reclamation for resolved leagues.** Close the `League` account after
-   all payouts are claimed and return its rent to the admin (the refund path
-   already reclaims `PlayerEntry` rent; this extends the idea to the resolved
-   happy path).
-2. **Deadlines / timestamps.** Add join/lock deadlines enforced by the on-chain
-   clock rather than relying solely on a manual admin `lock_league` call.
-3. **Events → indexer.** Index the emitted events (`LeagueCreated`,
+1. **Events → indexer.** Index the emitted events (`LeagueCreated`,
    `PlayerJoined`, `LeagueResolved`, `PayoutClaimed`, `LeagueCancelled`,
-   `PlayerRefunded`) for a richer UI and history.
-4. **Security review.** Independent audit + fuzzing before any mainnet value.
+   `PlayerRefunded`, `LeagueClosed`) for a richer UI and history.
+2. **Security review.** Independent audit + fuzzing before any mainnet value.

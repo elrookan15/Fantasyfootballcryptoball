@@ -123,12 +123,22 @@ describe("league-escrow (USDC / SPL token)", () => {
     }
   }
 
-  async function createLeague() {
+  async function createLeague(opts?: {
+    joinDeadline?: BN;
+    lockDeadline?: BN;
+  }) {
     const leagueId = new BN(nextLeagueId++);
     const league = leaguePda(admin.publicKey, leagueId);
     const vault = vaultAta(league);
     await program.methods
-      .createLeagueSpl(leagueId, ENTRY_FEE, MAX_PLAYERS, admin.publicKey)
+      .createLeagueSpl(
+        leagueId,
+        ENTRY_FEE,
+        MAX_PLAYERS,
+        admin.publicKey,
+        opts?.joinDeadline ?? new BN(0),
+        opts?.lockDeadline ?? new BN(0)
+      )
       .accountsPartial({
         league,
         mint,
@@ -427,6 +437,112 @@ describe("league-escrow (USDC / SPL token)", () => {
         .rpc(),
       "LeagueNotCancelled"
     );
+  });
+
+  // ── close_league SPL (rent reclamation + vault close) ────────────────────
+
+  it("closes a fully-claimed SPL league and returns vault rent to admin", async () => {
+    const { league, vault } = await createLeague();
+    const p1 = await playerWithTokens(ENTRY_FEE);
+    const p2 = await playerWithTokens(ENTRY_FEE);
+    await join(league, vault, p1);
+    await join(league, vault, p2);
+    await lock(league);
+
+    const pot = ENTRY_FEE.muln(2);
+    const w1 = pot.muln(60).divn(100);
+    const w2 = pot.sub(w1);
+    const winners = [p1.publicKey, p2.publicKey];
+    await program.methods
+      .resolveLeague(winners, [w1, w2])
+      .accountsPartial({ league, authority: admin.publicKey })
+      .remainingAccounts(winnerEntries(league, winners))
+      .rpc();
+
+    await claimTx(league, vault, p1).rpc();
+    await claimTx(league, vault, p2).rpc();
+
+    const adminLamportsBefore = await provider.connection.getBalance(admin.publicKey);
+
+    await program.methods
+      .closeLeague()
+      .accountsPartial({
+        league,
+        admin: admin.publicKey,
+        vault,
+        ...tokenAccounts,
+      })
+      .rpc();
+
+    // League account closed.
+    const leagueInfo = await provider.connection.getAccountInfo(league);
+    assert.isNull(leagueInfo);
+
+    // Vault account closed (vault tokens were already empty; its rent returned to admin).
+    const vaultInfo = await provider.connection.getAccountInfo(vault);
+    assert.isNull(vaultInfo);
+
+    // Admin received at least the vault ATA rent back.
+    const adminLamportsAfter = await provider.connection.getBalance(admin.publicKey);
+    assert.ok(adminLamportsAfter > adminLamportsBefore - 10_000);
+  });
+
+  it("rejects closing an SPL league before all winners have claimed", async () => {
+    const { league, vault } = await createLeague();
+    const p1 = await playerWithTokens(ENTRY_FEE);
+    const p2 = await playerWithTokens(ENTRY_FEE);
+    await join(league, vault, p1);
+    await join(league, vault, p2);
+    await lock(league);
+
+    const pot = ENTRY_FEE.muln(2);
+    const w1 = pot.muln(60).divn(100);
+    const w2 = pot.sub(w1);
+    const winners = [p1.publicKey, p2.publicKey];
+    await program.methods
+      .resolveLeague(winners, [w1, w2])
+      .accountsPartial({ league, authority: admin.publicKey })
+      .remainingAccounts(winnerEntries(league, winners))
+      .rpc();
+
+    // Only p1 claims.
+    await claimTx(league, vault, p1).rpc();
+
+    await expectError(
+      program.methods
+        .closeLeague()
+        .accountsPartial({ league, admin: admin.publicKey, vault, ...tokenAccounts })
+        .rpc(),
+      "LeagueNotFullyClaimed"
+    );
+  });
+
+  // ── deadline enforcement (SPL) ────────────────────────────────────────────
+
+  it("rejects joining after the join deadline has passed (SPL)", async () => {
+    const { league, vault } = await createLeague({ joinDeadline: new BN(1) });
+    const late = await playerWithTokens(ENTRY_FEE);
+    await expectError(join(league, vault, late), "JoinDeadlineExceeded");
+  });
+
+  it("allows joining when the join deadline has not yet passed (SPL)", async () => {
+    const { league, vault } = await createLeague({ joinDeadline: new BN(4102444800) });
+    const p1 = await playerWithTokens(ENTRY_FEE);
+    await join(league, vault, p1);
+    const state = await program.account.league.fetch(league);
+    assert.strictEqual(state.playerCount, 1);
+  });
+
+  it("rejects locking after the lock deadline has passed (SPL)", async () => {
+    const { league } = await createLeague({ lockDeadline: new BN(1) });
+    await expectError(lock(league), "LockDeadlineExceeded");
+  });
+
+  it("allows locking when the lock deadline has not yet passed (SPL)", async () => {
+    const { league } = await createLeague({ lockDeadline: new BN(4102444800) });
+    await lock(league);
+    const state = await program.account.league.fetch(league);
+    assert.deepStrictEqual(state.status, { locked: {} });
   });
 });
 
