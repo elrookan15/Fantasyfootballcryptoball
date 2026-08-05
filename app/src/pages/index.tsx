@@ -6,7 +6,7 @@ import {
   useConnection,
   useWallet,
 } from "@solana/wallet-adapter-react";
-import { BN } from "@coral-xyz/anchor";
+import { BN, utils } from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -29,7 +29,7 @@ import {
 const WalletMultiButton = dynamic(
   () =>
     import("@solana/wallet-adapter-react-ui").then((m) => m.WalletMultiButton),
-  { ssr: false }
+  { ssr: false },
 );
 
 type Currency = "SOL" | "USDC" | "SPL";
@@ -86,7 +86,7 @@ export default function Home() {
   const [entryFee, setEntryFee] = useState("0.1");
   const [maxPlayers, setMaxPlayers] = useState("4");
   const [leagueId, setLeagueId] = useState(() =>
-    String(Math.floor(Math.random() * 1_000_000))
+    String(Math.floor(Math.random() * 1_000_000)),
   );
 
   // Browse + lookup.
@@ -146,28 +146,34 @@ export default function Home() {
         notify(`Could not load league: ${(e as Error).message}`);
       }
     },
-    [connection, notify]
+    [connection, notify],
   );
 
   const loadOpenLeagues = useCallback(async () => {
     try {
       const program = getReadonlyProgram(connection);
-      const all = await program.account.league.all();
-      const open = all
-        .filter((l) => "open" in (l.account.status as Record<string, unknown>))
-        .map((l) => {
-          const pm = l.account.paymentMint as PublicKey | null;
-          const cur = currencyOf(pm);
-          const dec = cur === "SOL" ? SOL_DECIMALS : USDC_DECIMALS;
-          return {
-            admin: l.account.admin.toBase58(),
-            leagueId: l.account.leagueId.toString(),
-            currency: cur,
-            entryFee: l.account.entryFee.toNumber() / 10 ** dec,
-            playerCount: l.account.playerCount,
-            maxPlayers: l.account.maxPlayers,
-          } as LeagueSummary;
-        });
+      // Fetch only leagues with "Open" status (offset 92)
+      const all = await program.account.league.all([
+        {
+          memcmp: {
+            offset: 92,
+            bytes: utils.bytes.bs58.encode(new Uint8Array([0])),
+          },
+        },
+      ]);
+      const open = all.map((l) => {
+        const pm = l.account.paymentMint as PublicKey | null;
+        const cur = currencyOf(pm);
+        const dec = cur === "SOL" ? SOL_DECIMALS : USDC_DECIMALS;
+        return {
+          admin: l.account.admin.toBase58(),
+          leagueId: l.account.leagueId.toString(),
+          currency: cur,
+          entryFee: l.account.entryFee.toNumber() / 10 ** dec,
+          playerCount: l.account.playerCount,
+          maxPlayers: l.account.maxPlayers,
+        } as LeagueSummary;
+      });
       setOpenLeagues(open);
       notify(`Found ${open.length} open league(s).`);
     } catch (e) {
@@ -201,7 +207,7 @@ export default function Home() {
         setBusy(false);
       }
     },
-    [wallet, ref, refresh, loadOpenLeagues, notify]
+    [wallet, ref, refresh, loadOpenLeagues, notify],
   );
 
   const onCreate = () =>
@@ -219,7 +225,7 @@ export default function Home() {
             id,
             toBaseUnits(entryFee, SOL_DECIMALS),
             players,
-            wallet!.publicKey
+            wallet!.publicKey,
           )
           .accountsPartial({
             league: pda,
@@ -233,7 +239,7 @@ export default function Home() {
             id,
             toBaseUnits(entryFee, USDC_DECIMALS),
             players,
-            wallet!.publicKey
+            wallet!.publicKey,
           )
           .accountsPartial({
             league: pda,
@@ -400,7 +406,7 @@ export default function Home() {
 
   const isAdmin = useMemo(
     () => !!publicKey && !!league && league.admin === publicKey.toBase58(),
-    [publicKey, league]
+    [publicKey, league],
   );
   const isAuthority = useMemo(
     () =>
@@ -408,7 +414,7 @@ export default function Home() {
       !!league &&
       (league.admin === publicKey.toBase58() ||
         league.oracle === publicKey.toBase58()),
-    [publicKey, league]
+    [publicKey, league],
   );
 
   return (
@@ -436,9 +442,7 @@ export default function Home() {
               Currency
               <select
                 value={currency}
-                onChange={(e) =>
-                  setCurrency(e.target.value as "SOL" | "USDC")
-                }
+                onChange={(e) => setCurrency(e.target.value as "SOL" | "USDC")}
               >
                 <option value="SOL">SOL (native)</option>
                 <option value="USDC">USDC (SPL)</option>
@@ -652,8 +656,8 @@ export default function Home() {
             </div>
             {league.status === "cancelled" && (
               <p className="hint">
-                This league was cancelled before locking. Players who joined
-                can reclaim their deposit with &ldquo;Refund my deposit&rdquo;
+                This league was cancelled before locking. Players who joined can
+                reclaim their deposit with &ldquo;Refund my deposit&rdquo;
                 above.
               </p>
             )}

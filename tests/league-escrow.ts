@@ -31,21 +31,21 @@ describe("league-escrow", () => {
         adminKey.toBuffer(),
         leagueId.toArrayLike(Buffer, "le", 8),
       ],
-      program.programId
+      program.programId,
     )[0];
   }
 
   function entryPda(league: PublicKey, player: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from("entry"), league.toBuffer(), player.toBuffer()],
-      program.programId
+      program.programId,
     )[0];
   }
 
   /** Build the remainingAccounts array for resolveLeague, one entry per winner. */
   function winnerEntries(
     league: PublicKey,
-    winners: PublicKey[]
+    winners: PublicKey[],
   ): { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] {
     return winners.map((w) => ({
       pubkey: entryPda(league, w),
@@ -57,10 +57,7 @@ describe("league-escrow", () => {
   async function airdrop(pubkey: PublicKey, sol: number) {
     const sig = await connection.requestAirdrop(pubkey, sol * LAMPORTS_PER_SOL);
     const bh = await connection.getLatestBlockhash();
-    await connection.confirmTransaction(
-      { signature: sig, ...bh },
-      "confirmed"
-    );
+    await connection.confirmTransaction({ signature: sig, ...bh }, "confirmed");
   }
 
   async function fundedKeypair(sol = 2): Promise<Keypair> {
@@ -97,7 +94,7 @@ describe("league-escrow", () => {
         leagueId,
         opts?.entryFee ?? ENTRY_FEE,
         opts?.maxPlayers ?? MAX_PLAYERS,
-        oracle
+        oracle,
       )
       .accountsPartial({
         league,
@@ -247,7 +244,7 @@ describe("league-escrow", () => {
         .remainingAccounts(winnerEntries(league, winners))
         .signers([outsider])
         .rpc(),
-      "Unauthorized"
+      "Unauthorized",
     );
   });
 
@@ -260,7 +257,7 @@ describe("league-escrow", () => {
         .accountsPartial({ league, admin: outsider.publicKey })
         .signers([outsider])
         .rpc(),
-      "Unauthorized"
+      "Unauthorized",
     );
   });
 
@@ -275,7 +272,7 @@ describe("league-escrow", () => {
         .accountsPartial({ league, authority: admin.publicKey })
         .remainingAccounts(winnerEntries(league, winners))
         .rpc(),
-      "LeagueNotLocked"
+      "LeagueNotLocked",
     );
   });
 
@@ -294,7 +291,7 @@ describe("league-escrow", () => {
         .accountsPartial({ league, authority: admin.publicKey })
         .remainingAccounts(winnerEntries(league, winners))
         .rpc(),
-      "PayoutMustEqualPot"
+      "PayoutMustEqualPot",
     );
   });
 
@@ -313,7 +310,7 @@ describe("league-escrow", () => {
         .accountsPartial({ league, authority: admin.publicKey })
         .remainingAccounts(winnerEntries(league, winners))
         .rpc(),
-      "PayoutMustEqualPot"
+      "PayoutMustEqualPot",
     );
   });
 
@@ -331,7 +328,10 @@ describe("league-escrow", () => {
     const pot = ENTRY_FEE.muln(2);
     const winners = [p1.publicKey, p2.publicKey];
     await program.methods
-      .resolveLeague(winners, [pot.muln(60).divn(100), pot.sub(pot.muln(60).divn(100))])
+      .resolveLeague(winners, [
+        pot.muln(60).divn(100),
+        pot.sub(pot.muln(60).divn(100)),
+      ])
       .accountsPartial({ league, authority: admin.publicKey })
       .remainingAccounts(winnerEntries(league, winners))
       .rpc();
@@ -348,7 +348,7 @@ describe("league-escrow", () => {
         .accountsPartial({ league, player: p1.publicKey })
         .signers([p1])
         .rpc(),
-      "AlreadyClaimed"
+      "AlreadyClaimed",
     );
   });
 
@@ -376,7 +376,7 @@ describe("league-escrow", () => {
         .accountsPartial({ league, player: p2.publicKey })
         .signers([p2])
         .rpc(),
-      "NotAWinner"
+      "NotAWinner",
     );
   });
 
@@ -412,7 +412,7 @@ describe("league-escrow", () => {
           },
         ])
         .rpc(),
-      "WinnerNotParticipant"
+      "WinnerNotParticipant",
     );
   });
 
@@ -432,7 +432,7 @@ describe("league-escrow", () => {
         .accountsPartial({ league, authority: admin.publicKey })
         .remainingAccounts([])
         .rpc(),
-      "WinnerEntryMismatch"
+      "WinnerEntryMismatch",
     );
   });
 
@@ -457,11 +457,19 @@ describe("league-escrow", () => {
         .resolveLeague([p1.publicKey, p2.publicKey], [w1, w2])
         .accountsPartial({ league, authority: admin.publicKey })
         .remainingAccounts([
-          { pubkey: entryPda(league, p2.publicKey), isWritable: false, isSigner: false },
-          { pubkey: entryPda(league, p1.publicKey), isWritable: false, isSigner: false },
+          {
+            pubkey: entryPda(league, p2.publicKey),
+            isWritable: false,
+            isSigner: false,
+          },
+          {
+            pubkey: entryPda(league, p1.publicKey),
+            isWritable: false,
+            isSigner: false,
+          },
         ])
         .rpc(),
-      "WinnerEntryMismatch"
+      "WinnerEntryMismatch",
     );
   });
 
@@ -518,7 +526,7 @@ describe("league-escrow", () => {
         })
         .signers([p1])
         .rpc(),
-      "AccountNotInitialized"
+      "AccountNotInitialized",
     );
   });
 
@@ -531,7 +539,7 @@ describe("league-escrow", () => {
         .accountsPartial({ league, admin: outsider.publicKey })
         .signers([outsider])
         .rpc(),
-      "Unauthorized"
+      "Unauthorized",
     );
   });
 
@@ -549,7 +557,7 @@ describe("league-escrow", () => {
         .cancelLeague()
         .accountsPartial({ league, admin: admin.publicKey })
         .rpc(),
-      "CancelNotAllowed"
+      "CancelNotAllowed",
     );
   });
 
@@ -568,8 +576,7 @@ describe("league-escrow", () => {
         })
         .signers([p1])
         .rpc(),
-      "LeagueNotCancelled"
+      "LeagueNotCancelled",
     );
   });
 });
-

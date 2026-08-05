@@ -50,21 +50,21 @@ describe("league-escrow (USDC / SPL token)", () => {
         adminKey.toBuffer(),
         leagueId.toArrayLike(Buffer, "le", 8),
       ],
-      program.programId
+      program.programId,
     )[0];
   }
 
   function entryPda(league: PublicKey, player: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from("entry"), league.toBuffer(), player.toBuffer()],
-      program.programId
+      program.programId,
     )[0];
   }
 
   /** Build the remainingAccounts array for resolveLeague, one entry per winner. */
   function winnerEntries(
     league: PublicKey,
-    winners: PublicKey[]
+    winners: PublicKey[],
   ): { pubkey: PublicKey; isWritable: boolean; isSigner: boolean }[] {
     return winners.map((w) => ({
       pubkey: entryPda(league, w),
@@ -95,7 +95,7 @@ describe("league-escrow (USDC / SPL token)", () => {
       connection,
       kp,
       mint,
-      kp.publicKey
+      kp.publicKey,
     );
     await mintTo(
       connection,
@@ -103,7 +103,7 @@ describe("league-escrow (USDC / SPL token)", () => {
       mint,
       ata.address,
       mintAuthority,
-      BigInt(amount.toString())
+      BigInt(amount.toString()),
     );
     return kp;
   }
@@ -151,7 +151,7 @@ describe("league-escrow (USDC / SPL token)", () => {
         vault,
         playerTokenAccount: getAssociatedTokenAddressSync(
           mint,
-          player.publicKey
+          player.publicKey,
         ),
         ...tokenAccounts,
       })
@@ -176,7 +176,7 @@ describe("league-escrow (USDC / SPL token)", () => {
         vault,
         playerTokenAccount: getAssociatedTokenAddressSync(
           mint,
-          player.publicKey
+          player.publicKey,
         ),
         ...tokenAccounts,
       })
@@ -192,7 +192,7 @@ describe("league-escrow (USDC / SPL token)", () => {
       mintAuthority,
       mintAuthority.publicKey,
       null,
-      DECIMALS
+      DECIMALS,
     );
   });
 
@@ -213,7 +213,7 @@ describe("league-escrow (USDC / SPL token)", () => {
     const vaultAcc = await getAccount(connection, vault);
     assert.strictEqual(
       vaultAcc.amount.toString(),
-      ENTRY_FEE.muln(2).toString()
+      ENTRY_FEE.muln(2).toString(),
     );
 
     await lock(league);
@@ -233,10 +233,16 @@ describe("league-escrow (USDC / SPL token)", () => {
 
     // Each player deposited their entire balance, so post-claim balance == payout.
     const p1Bal = (
-      await getAccount(connection, getAssociatedTokenAddressSync(mint, p1.publicKey))
+      await getAccount(
+        connection,
+        getAssociatedTokenAddressSync(mint, p1.publicKey),
+      )
     ).amount;
     const p2Bal = (
-      await getAccount(connection, getAssociatedTokenAddressSync(mint, p2.publicKey))
+      await getAccount(
+        connection,
+        getAssociatedTokenAddressSync(mint, p2.publicKey),
+      )
     ).amount;
     assert.strictEqual(p1Bal.toString(), w1.toString());
     assert.strictEqual(p2Bal.toString(), w2.toString());
@@ -264,7 +270,7 @@ describe("league-escrow (USDC / SPL token)", () => {
         .remainingAccounts(winnerEntries(league, winners))
         .signers([outsider])
         .rpc(),
-      "Unauthorized"
+      "Unauthorized",
     );
   });
 
@@ -304,7 +310,7 @@ describe("league-escrow (USDC / SPL token)", () => {
         })
         .signers([p1])
         .rpc(),
-      "WrongCurrency"
+      "WrongCurrency",
     );
   });
 
@@ -320,7 +326,7 @@ describe("league-escrow (USDC / SPL token)", () => {
         .accountsPartial({ league, authority: admin.publicKey })
         .remainingAccounts(winnerEntries(league, winners))
         .rpc(),
-      "PayoutMustEqualPot"
+      "PayoutMustEqualPot",
     );
   });
 
@@ -336,7 +342,7 @@ describe("league-escrow (USDC / SPL token)", () => {
         .accountsPartial({ league, authority: admin.publicKey })
         .remainingAccounts(winnerEntries(league, winners))
         .rpc(),
-      "PayoutMustEqualPot"
+      "PayoutMustEqualPot",
     );
   });
 
@@ -359,7 +365,7 @@ describe("league-escrow (USDC / SPL token)", () => {
           },
         ])
         .rpc(),
-      "WinnerNotParticipant"
+      "WinnerNotParticipant",
     );
   });
 
@@ -384,10 +390,7 @@ describe("league-escrow (USDC / SPL token)", () => {
         player: p1.publicKey,
         mint,
         vault,
-        playerTokenAccount: getAssociatedTokenAddressSync(
-          mint,
-          p1.publicKey
-        ),
+        playerTokenAccount: getAssociatedTokenAddressSync(mint, p1.publicKey),
         ...tokenAccounts,
       })
       .signers([p1])
@@ -395,7 +398,7 @@ describe("league-escrow (USDC / SPL token)", () => {
 
     const p1Token = await getAccount(
       connection,
-      getAssociatedTokenAddressSync(mint, p1.publicKey)
+      getAssociatedTokenAddressSync(mint, p1.publicKey),
     );
     assert.strictEqual(p1Token.amount.toString(), ENTRY_FEE.toString());
 
@@ -417,16 +420,12 @@ describe("league-escrow (USDC / SPL token)", () => {
           player: p1.publicKey,
           mint,
           vault,
-          playerTokenAccount: getAssociatedTokenAddressSync(
-            mint,
-            p1.publicKey
-          ),
+          playerTokenAccount: getAssociatedTokenAddressSync(mint, p1.publicKey),
           ...tokenAccounts,
         })
         .signers([p1])
         .rpc(),
-      "LeagueNotCancelled"
+      "LeagueNotCancelled",
     );
   });
 });
-
