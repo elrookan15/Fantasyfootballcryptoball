@@ -8,6 +8,13 @@ import {
 } from "@solana/wallet-adapter-react";
 import { BN } from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
+import bs58 from "bs58";
+
+// Offset breakdown for League account:
+// 8 (discriminator) + 32 (admin pubkey) + 32 (oracle pubkey) + 8 (league_id) +
+// 8 (entry_fee) + 2 (max_players) + 2 (player_count) = 92 bytes.
+const LEAGUE_STATUS_OFFSET = 92;
+const LEAGUE_STATUS_OPEN = 0;
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -152,9 +159,15 @@ export default function Home() {
   const loadOpenLeagues = useCallback(async () => {
     try {
       const program = getReadonlyProgram(connection);
-      const all = await program.account.league.all();
+      const all = await program.account.league.all([
+        {
+          memcmp: {
+            offset: LEAGUE_STATUS_OFFSET,
+            bytes: bs58.encode(Buffer.from([LEAGUE_STATUS_OPEN])),
+          },
+        },
+      ]);
       const open = all
-        .filter((l) => "open" in (l.account.status as Record<string, unknown>))
         .map((l) => {
           const pm = l.account.paymentMint as PublicKey | null;
           const cur = currencyOf(pm);
