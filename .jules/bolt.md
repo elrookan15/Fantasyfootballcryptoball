@@ -1,4 +1,3 @@
-## 2023-10-27 - Memcmp filter logic
-
-**Learning:** When adding `memcmp` filter constants to Anchor accounts (such as offsets and values), use the `bs58` directly in Next.js instead of nested `@coral-xyz/anchor/dist/cjs/utils/bytes/index.js` which can cause module resolution issues due to internal bundling logic in Next.js/Webpack or Node.
-**Action:** Just use `bs58` directly as it's common practice in Solana frontend. Document the struct byte offset cleanly in constants.
+## 2024-05-15 - RPC Fetch Optimization
+**Learning:** In Solana/Anchor, `program.account.<account_name>.all()` without filters fetches all accounts of that type from the RPC node. When the frontend filters these accounts client-side (e.g., for "open" leagues), it results in massive network payloads and high memory consumption as the number of accounts grows.
+**Action:** Use `memcmp` in the `all(filters)` method to push the filtering to the RPC node, pulling only the accounts that actually match the criteria. Additionally, prefer using the `bs58` package directly in Next.js instead of nested `@coral-xyz/anchor/dist/cjs/utils/bytes/index.js` to avoid module resolution issues. Document the struct byte offset cleanly in constants.
