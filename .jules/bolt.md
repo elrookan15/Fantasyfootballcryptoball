@@ -1,3 +1,3 @@
-## 2024-05-15 - Fetching Accounts
-**Learning:** In Solana/Anchor, `program.account.<account_name>.all()` fetches ALL accounts from the RPC node, which can be a huge bottleneck and cause large network payloads and memory usage. Filtering them client-side makes this even worse.
-**Action:** Use `memcmp` filters in `program.account.<account_name>.all(filters)` to push filtering to the RPC node, fetching only the necessary data.
+## 2024-05-15 - RPC Fetch Optimization
+**Learning:** In Solana/Anchor, `program.account.<account_name>.all()` without filters fetches all accounts of that type from the RPC node. When the frontend filters these accounts client-side (e.g., for "open" leagues), it results in massive network payloads and high memory consumption as the number of accounts grows.
+**Action:** Use `memcmp` in the `all(filters)` method to push the filtering to the RPC node, pulling only the accounts that actually match the criteria (e.g., using `@coral-xyz/anchor`'s `utils.bytes.bs58` to encode the byte matching the enum status).
