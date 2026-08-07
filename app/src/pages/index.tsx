@@ -107,14 +107,21 @@ export default function Home() {
       try {
         const program = getReadonlyProgram(connection);
         const pda = leaguePda(new PublicKey(r.admin), new BN(r.leagueId));
-        const acc = await program.account.league.fetch(pda);
+
+        // ⚡ Bolt: Fetch account info once to prevent N+1 RPC calls
+        // Instead of program.account.league.fetch() followed by connection.getBalance(),
+        // we fetch the account info (which includes both data and lamports) in a single RPC call.
+        const accInfo = await connection.getAccountInfo(pda);
+        if (!accInfo) throw new Error("League account not found");
+
+        const acc = program.coder.accounts.decode("league", accInfo.data);
         const paymentMint = acc.paymentMint as PublicKey | null;
         const cur = currencyOf(paymentMint);
 
         let decimals = SOL_DECIMALS;
         let escrowBalance = 0;
         if (!paymentMint) {
-          escrowBalance = (await connection.getBalance(pda)) / 10 ** decimals;
+          escrowBalance = accInfo.lamports / 10 ** decimals;
         } else {
           const bal = await connection.getTokenAccountBalance(acc.vault);
           decimals = bal.value.decimals;
@@ -135,7 +142,7 @@ export default function Home() {
           pot: acc.totalPot.toNumber() / 10 ** decimals,
           escrowBalance,
           status: statusLabel(acc.status as Record<string, unknown>),
-          winners: acc.winners.map((w) => ({
+          winners: (acc.winners as { player: PublicKey; amount: BN; claimed: boolean }[]).map((w) => ({
             player: w.player.toBase58(),
             amount: w.amount.toNumber() / 10 ** decimals,
             claimed: w.claimed,
